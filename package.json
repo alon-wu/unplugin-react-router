@@ -1,0 +1,68 @@
+{
+  "name": "unplugin-react-router",
+  "version": "0.1.0",
+  "description": "File based routing for React Router (unplugin)",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "unplugin",
+    "vite",
+    "react-router",
+    "pages",
+    "filesystem",
+    "routing",
+    "file-based-routing"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js",
+      "require": "./dist/vite.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "pnpm -C playground dev",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "react-router": "^8.0.0",
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "dependencies": {
+    "picomatch": "^4.0.2",
+    "unplugin": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/picomatch": "^4.0.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "chokidar": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.0",
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
+  }
+}

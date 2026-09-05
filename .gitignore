@@ -1,0 +1,8 @@
+node_modules
+dist
+typed-routes.d.ts
+*.log
+.DS_Store
+.npm-tmp-cache
+tests/.gen
+playground/dist
