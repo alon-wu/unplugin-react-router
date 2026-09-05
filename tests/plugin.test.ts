@@ -126,7 +126,7 @@ describe('vite plugin dev-server wiring', () => {
       // initial scan (vite calls buildStart) so that later structural
       // changes can be detected against a non-empty baseline
       await plugin.buildStart()
-      const closeWatchers = plugin.configureServer(fakeServer)
+      plugin.configureServer(fakeServer)
 
       // structural change: add a page file
       writeFileSync(join(pages, 'about.tsx'), 'export default function A() { return <div>A</div> }')
@@ -139,8 +139,11 @@ describe('vite plugin dev-server wiring', () => {
       const code = plugin.load('\0unplugin-react-router/routes')
       expect(code).toContain('/about')
 
-      expect(typeof closeWatchers).toBe('function')
-      closeWatchers()
+      // cleanup is registered on the http server 'close' event (NOT returned
+      // from configureServer — Vite 8 would invoke a returned function at once)
+      const closeCall = httpOnce.mock.calls.find((c) => c[0] === 'close')
+      expect(closeCall).toBeTruthy()
+      closeCall![1]()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -164,15 +167,18 @@ describe('vite plugin dev-server wiring', () => {
         moduleGraph: { getModuleById: () => undefined },
       }
       await plugin.buildStart()
-      const closeWatchers = plugin.configureServer(fakeServer)
+      const httpOnce = vi.fn()
+      fakeServer.httpServer = { once: httpOnce }
+      plugin.configureServer(fakeServer)
 
       // let the polling scanner establish its baseline first
       await new Promise((resolve) => setTimeout(resolve, 500))
       writeFileSync(join(pages, 'polls.tsx'), 'export default function P() { return <div>P</div> }')
       await new Promise((resolve) => setTimeout(resolve, 900))
       expect(send).toHaveBeenCalledWith({ type: 'full-reload' })
-      expect(typeof closeWatchers).toBe('function')
-      closeWatchers()
+      // stop the polling scanner through the registered close handler
+      const closeCall = httpOnce.mock.calls.find((c) => c[0] === 'close')
+      closeCall![1]()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

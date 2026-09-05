@@ -76,6 +76,7 @@ export default function reactRouter(options: Options = {}): Plugin {
       const mode = resolved.watch
       if (mode === false) {
         // never watch: structural page changes need a dev-server restart
+        logger?.('dev watcher disabled (watch: false)')
         return
       }
 
@@ -85,6 +86,7 @@ export default function reactRouter(options: Options = {}): Plugin {
 
       if (mode === 'polling' || !server.watcher) {
         // forced polling, or no bundler watcher to tap
+        logger?.('dev watcher: polling scanner')
         const scanner = createPollingScanner({
           folders: resolved.routesFolder,
           onChanged,
@@ -93,6 +95,7 @@ export default function reactRouter(options: Options = {}): Plugin {
         stopPolling = scanner.close
       } else {
         // primary path: bundler watcher add/unlink events
+        logger?.('dev watcher: dev-server file watcher')
         const attached = attachPageWatcher({
           watcher: server.watcher,
           folders: resolved.routesFolder,
@@ -103,13 +106,17 @@ export default function reactRouter(options: Options = {}): Plugin {
       }
 
       const closeWatchers = () => {
+        logger?.('dev watcher closed')
         detachWatcher?.()
         detachWatcher = undefined
         stopPolling?.()
         stopPolling = undefined
       }
+      // NOTE: do NOT return closeWatchers here. In Vite 8 (Rolldown) the
+      // function returned from configureServer is invoked immediately after
+      // configuration, which would stop the watcher before it starts. The
+      // httpServer 'close' listener below is the reliable cleanup path.
       server.httpServer?.once('close', closeWatchers)
-      return closeWatchers
     },
   }
 }

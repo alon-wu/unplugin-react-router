@@ -49,6 +49,7 @@ v0.2 的其余新能力由独立的 fixture 文件夹 + 选项覆盖：
 pnpm install
 
 pnpm test         # vitest run — 全部七个测试套件
+pnpm test:e2e     # Playwright — 真实浏览器验收（自动起/停 vite）
 pnpm typecheck    # 插件源码的 tsc --noEmit
 pnpm build        # tsup: dist/{index,vite,webpack,rollup,esbuild}.{js,cjs,d.ts}
 
@@ -58,6 +59,37 @@ pnpm -C playground build
 ```
 
 `pnpm test` 刻意保持低依赖（无 jsdom/happy-dom）：端到端测试套件使用 React Router 的静态路由 + `react-dom/server`，因此可以在纯 Node 环境下运行。
+
+## 浏览器 E2E（Playwright，v0.2）
+
+`tests/e2e-app/` 是独立的 Vite 应用（开启 `dotNesting` 与 `layoutFile`，另含
+`filePatterns` 文件夹与参数化前缀文件夹）；`tests/e2e/e2e.spec.ts` 用
+Playwright 驱动**真实 Chrome** 断言 16 项验收标准（`playwright.config.ts`
+自动起/停 dev server）：
+
+- 基础约定：index / 静态 / 动态参数 / 同名布局 / 路由组布局 / `[...rest]` 404；
+- v0.2 特性：根 `layout.tsx` 包装、可选参数 `[[chapter]].tsx` 双 URL、
+  `export const route` 绝对覆盖（含**原磁盘路径失效**）、点嵌套、
+  `filePatterns` 过滤、参数化前缀的多文件夹；
+- **开发期结构性 HMR**：运行中新增页面文件 → 无需重启即可访问；删除 → 路由
+  立即失效（每个用例 15 s 轮询预算）。
+
+```bash
+pnpm test:e2e                     # 全量（自动起 vite + 浏览器）
+pnpm exec playwright test -- --ui # 可视化 UI 模式
+pnpm test:e2e -- -g "optional"    # 按标题过滤
+pnpm exec playwright test -- --headed
+```
+
+本地复用系统 Chrome（`playwright.config.ts` 的 `channel: 'chrome'`，免下载）；
+CI 的 `e2e` job 改用 Playwright 管理的 Chromium（`pnpm exec playwright install
+--with-deps chromium`）。
+
+`tests/scripts/playground-smoke.mjs` 是对真实 playground dev server
+（`127.0.0.1:5173`）的冒烟脚本：先 `pnpm dev` 再
+`node tests/scripts/playground-smoke.mjs`——逐 URL 断言页面 marker 且无
+console/运行时错误，并现场做一次"加/删页面文件 → 路由出现/失效"的结构性 HMR
+检查。
 
 ## 把 playground 当作手工验证参考
 

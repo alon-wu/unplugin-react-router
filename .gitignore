@@ -6,3 +6,5 @@ typed-routes.d.ts
 .npm-tmp-cache
 tests/.gen
 playground/dist
+test-results
+playwright-report

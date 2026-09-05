@@ -53,6 +53,7 @@ options:
 pnpm install
 
 pnpm test         # vitest run — all seven suites
+pnpm test:e2e     # Playwright — real-browser acceptance (starts/stops vite)
 pnpm typecheck    # tsc --noEmit for the plugin source
 pnpm build        # tsup: dist/{index,vite,webpack,rollup,esbuild}.{js,cjs,d.ts}
 
@@ -64,6 +65,41 @@ pnpm -C playground build
 `pnpm test` is intentionally dependency-light (no jsdom/happy-dom): the e2e
 suite uses React Router's static router + `react-dom/server`, so it runs in
 plain Node.
+
+## Browser E2E (Playwright, v0.2)
+
+`tests/e2e-app/` is a dedicated Vite app (with `dotNesting` and `layoutFile`
+enabled, plus a `filePatterns` folder and a parameterised-prefix folder);
+`tests/e2e/e2e.spec.ts` drives a **real Chrome** via Playwright and asserts 16
+acceptance criteria (`playwright.config.ts` starts/stops the dev server):
+
+- base conventions: index / static / dynamic params / same-name layout / group
+  layout / `[...rest]` 404;
+- v0.2 features: root `layout.tsx` wrapper, optional `[[chapter]].tsx` at both
+  URLs, `export const route` absolute override (including the **original disk
+  path no longer matching**), dot nesting, `filePatterns` filtering,
+  parameterised-prefix extra folder;
+- **dev-mode structural HMR**: adding a page file while the server runs makes
+  the route reachable without a restart; removing it retires the route again
+  (15 s polling budget per case).
+
+```bash
+pnpm test:e2e                     # full run (auto-starts vite + browser)
+pnpm exec playwright test -- --ui # visual UI mode
+pnpm test:e2e -- -g "optional"    # filter by title
+pnpm exec playwright test -- --headed
+```
+
+Local runs reuse the system Chrome (`channel: 'chrome'` in
+`playwright.config.ts`, no download); the CI `e2e` job uses the
+Playwright-managed Chromium instead (`pnpm exec playwright install --with-deps
+chromium`).
+
+`tests/scripts/playground-smoke.mjs` is a smoke script against the real
+playground dev server (`127.0.0.1:5173`): start `pnpm dev`, then run
+`node tests/scripts/playground-smoke.mjs` — it visits every route, asserts each
+page marker and the absence of console/runtime errors, and performs a live
+structural-HMR check (adding/removing a page file → route appears/disappears).
 
 ## Playground as the manual reference
 

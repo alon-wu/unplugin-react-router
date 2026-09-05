@@ -203,7 +203,9 @@ export function createPollingScanner(options: {
           })
         }
       })
-      .catch(() => {})
+      .catch((error) => {
+        logger?.(`Error while scanning routes: ${String(error)}`)
+      })
   }
 
   timer = setInterval(tick, interval)

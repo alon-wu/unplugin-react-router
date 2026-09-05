@@ -1,4 +1,11 @@
 import { expect, test } from '@playwright/test'
+import { rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const pagesDir = fileURLToPath(
+  new URL('../e2e-app/src/pages', import.meta.url)
+)
 
 /**
  * Acceptance criteria for the v0.2 routing conventions, checked in a real
@@ -112,5 +119,71 @@ test.describe('no console/page errors on happy paths', () => {
     }
     const errors = (page as any).__e2eErrors as string[]
     expect(errors).toEqual([])
+  })
+})
+
+test.describe('filePatterns (per-folder positive filter)', () => {
+  test('only *.page.tsx files of the featured folder become routes', async ({
+    page,
+  }) => {
+    await gotoAndExpect(page, '/featured/guide/page', 'E2E-FEATURED')
+    // plain.tsx does not match the pattern → 404 catch-all
+    await gotoAndExpect(page, '/featured/plain', 'E2E-NOTFOUND')
+  })
+})
+
+test.describe('multiple routes folders with a parameterised prefix', () => {
+  test('extra folder prefix extra/[scope] → /extra/:scope/about', async ({
+    page,
+  }) => {
+    await gotoAndExpect(page, '/extra/en/about', 'E2E-EXTRA')
+  })
+})
+
+test.describe('dev-mode structural HMR (add/remove page files)', () => {
+  test('adding a page file makes its route available without a restart', async ({
+    page,
+  }) => {
+    const hot = join(pagesDir, 'hot.tsx')
+    try {
+      // not a route yet → catch-all
+      await page.goto('/hot')
+      await expect(page.locator('body')).toContainText('E2E-NOTFOUND')
+
+      // add the page while the dev server is running
+      writeFileSync(
+        hot,
+        'export default function Hot() { return <h1>E2E-HOT</h1> }'
+      )
+      // the plugin reloads the page with the fresh route table — expect keeps
+      // retrying until the new marker is visible (10s budget)
+      await page.goto('/hot')
+      await expect(page.locator('body')).toContainText('E2E-HOT', {
+        timeout: 15_000,
+      })
+    } finally {
+      rmSync(hot, { force: true })
+    }
+  })
+
+  test('removing a page file retires its route again', async ({ page }) => {
+    const hot = join(pagesDir, 'temp.tsx')
+    writeFileSync(
+      hot,
+      'export default function Temp() { return <h1>E2E-TEMP</h1> }'
+    )
+    try {
+      await page.goto('/temp')
+      await expect(page.locator('body')).toContainText('E2E-TEMP', {
+        timeout: 15_000,
+      })
+    } finally {
+      rmSync(hot, { force: true })
+    }
+    // after removal the URL falls back to the 404 catch-all again
+    await page.goto('/temp')
+    await expect(page.locator('body')).toContainText('E2E-NOTFOUND', {
+      timeout: 15_000,
+    })
   })
 })
