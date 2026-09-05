@@ -26,6 +26,22 @@ jobs:
       - name: Assert working tree is clean after build
         run: git diff --exit-code
 
+  e2e:
+    name: Browser E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run browser E2E
+        run: pnpm exec playwright test
+
   release:
     name: Changesets release
     if: github.ref == 'refs/heads/main'
