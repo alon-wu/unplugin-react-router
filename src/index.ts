@@ -11,21 +11,27 @@ export type { Options, RoutesFolder, RoutesFolderOption } from './options'
 export { DEFAULT_OPTIONS } from './options'
 export type { RoutesContext, ServerContext } from './core/context'
 export { createRoutesContext } from './core/context'
-export type { TreeNode, SegmentKind } from './core/tree'
+export type { TreeNode, SegmentKind, TreeOptions } from './core/tree'
 export { MODULE_ROUTES_PATH } from './core/moduleConstants'
+export type { PageRouteConfig } from './core/routeConfig'
 
 /**
- * Build-tool agnostic entry (works with rollup/rolldown builds). Most users
- * should import the Vite plugin from `unplugin-react-router/vite`.
+ * Build-tool agnostic entry. The factory instance exposes per-bundler
+ * adapters — use the dedicated subpath for clarity:
  *
  * ```ts
- * // vite.config.ts
- * import reactRouter from 'unplugin-react-router/vite'
- *
- * export default defineConfig({
- *   plugins: [reactRouter()],
- * })
+ * import reactRouter from 'unplugin-react-router/vite'      // Vite
+ * import reactRouter from 'unplugin-react-router/webpack'    // Webpack
+ * import reactRouter from 'unplugin-react-router/rollup'     // Rollup
+ * import reactRouter from 'unplugin-react-router/esbuild'    // esbuild
  * ```
+ *
+ * The root export is the raw `createUnplugin` instance:
+ * `reactRouter.webpack(options)`, `reactRouter.rollup(options)`, …
+ *
+ * Rollup/rolldown watch mode works out of the box: every rebuild re-runs the
+ * plugin hooks (a fresh `scanPages()`), so adding/removing page files is
+ * picked up by the bundler's own watch pipeline.
  */
 export default createUnplugin<Options | undefined>((opt = {}) => {
   const options = resolveOptions(opt)
@@ -45,10 +51,6 @@ export default createUnplugin<Options | undefined>((opt = {}) => {
 
     async buildStart() {
       await ctx.scanPages()
-    },
-
-    buildEnd() {
-      ctx.stopWatcher()
     },
 
     load(id: string) {

@@ -9,7 +9,7 @@
 | `react-router` | `^8.0.0`（peer 依赖） | 数据模式（Data Mode）SPA。一切内容都映射到 `RouteObject`。 |
 | `vite` | `^5 || ^6 || ^7 || ^8`（可选 peer 依赖） | 仅在通过 `./vite` 入口使用时才需要。 |
 | `react` / `react-dom` | `^19`（通常） | 任意与 React Router v8 兼容的版本。 |
-| Node.js | ≥ 20（CI/开发基于 24 测试） | 仅支持 ESM，使用现代 `node:` API。 |
+| Node.js | ≥ 20.19（engines；CI/开发基于 24 测试） | 仅支持 ESM，使用现代 `node:` API。 |
 
 TypeScript 可选但建议安装——只有当检测到已安装 `typescript`（或传入了 `dts: true`）时，插件才会生成对应的 `.d.ts` 文件。
 
@@ -49,7 +49,7 @@ export default defineConfig({
 
 该包暴露两个入口：
 
-- `unplugin-react-router/vite` —— **原生 Vite 插件**（推荐）。它会同时接入虚拟模块与开发服务器相关的部分（轮询新增与删除的页面文件、模块失效、整页刷新）。
+- `unplugin-react-router/vite` —— **原生 Vite 插件**（推荐）。它会同时接入虚拟模块与开发服务器相关的部分（dev-server watcher 监听新增/删除的页面文件，必要时回退轮询，`watch` 选项可调；模块失效与整页刷新）。
 - `unplugin-react-router` —— 一个通用的 `unplugin` 工厂，适用于 rollup/rolldown/… 等构建。当你通过其它打包器构建时它很有用；但它不提供开发服务器的文件监听。
 
 ## 接入路由——唯一的手动步骤
@@ -106,6 +106,27 @@ declare module 'unplugin-react-router/routes' {
 > 为什么这个模块需要该声明？它的运行时源码是纯 JS（由于虚拟模块 id 没有扩展名，打包器会把它当作 JS 解析），因此正是这份环境声明（ambient declaration）为你提供编辑器补全与类型检查。
 
 如果你不使用 TypeScript，可以通过 `dts: false` 关闭生成。
+
+### 生成的路由类型面（v0.2）
+
+`typed-routes.d.ts` 在声明虚拟模块之外，还会从页面树推导并导出路由类型面
+（纯类型、无运行时开销）：
+
+```ts
+import type { AppRoutePath, RouteParams, RouteConfig, LoaderData } from 'unplugin-react-router/routes'
+```
+
+- `AppRoutePath` —— 所有可达 URL 的字面量联合（`'/' | '/about' | '/users/:id' | …`），
+  可用于需要穷举路由的场景；
+- `RouteParams<'/users/:id'>` —— 逐路由参数形状，可喂给 `useParams`：
+
+```tsx
+// src/pages/users/[id].tsx
+const { id } = useParams<RouteParams<'/users/:id'>>() // id: string
+```
+
+- `RouteConfig` / `LoaderData<T>` —— 分别是 `export const route` 的标注类型与
+  loader 返回值的便捷别名（详见 [路由模块 → 类型化路由面](route-modules.md)）。
 
 ## 编写你的第一个页面
 

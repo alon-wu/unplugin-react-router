@@ -4,12 +4,15 @@
 
 ## 测试套件
 
-测试运行在 Node 上（`vitest`，无 DOM），覆盖四个层面：
+测试运行在 Node 上（`vitest`，无 DOM），覆盖七个测试套件：
 
 | 文件 | 验证内容 |
 | --- | --- |
-| `tests/tree.test.ts` | 分段（segment）解析、校验错误、树的插入、splat/index/重复规则 |
-| `tests/generateRouteRecords.test.ts` | 代码生成输出形态：index/param/splat 记录、同名布局合并、无路径（pathless）分组、确定性 |
+| `tests/tree.test.ts` | 分段（segment）解析、校验错误、树的插入、splat/index/重复规则；v0.2：可选参数 `[[x]]`/`[[...x]]` 拆分、点嵌套、`layout.tsx`（`layoutFile`）与 `export const route` 的放置校验 |
+| `tests/routeConfig.test.ts` | `export const route` 的源码级静态提取：纯字面量解析、跳过字符串/模板串/注释、非对象/计算值/未知键/重复导出报错 |
+| `tests/generateRouteRecords.test.ts` | 代码生成输出形态：index/param/splat 记录、同名布局合并、无路径（pathless）分组、确定性；v0.2：path/caseSensitive/handle 覆盖、可选参数拆分、根 `layout.tsx`、点嵌套输出 |
+| `tests/typedSurface.test.ts` | 可达 URL 收集（每条路径及其参数键、确定性排序）与 `typed-routes.d.ts` 类型面生成（空树亦产出合法表面） |
+| `tests/plugin.test.ts` | v0.2 选项解析（`layoutFile`/`filePatterns` 校验与逐文件夹解析）、filePatterns 过滤扫描、Vite 插件 dev-server 接线（watcher 触发的重载、`watch: 'polling'` 轮询） |
 | `tests/watch.test.ts` | `attachPageWatcher` 的添加/删除过滤、排除项处理、detach 行为 |
 | `tests/runtime.test.ts` | **端到端（e2e）**：插件扫描测试夹具（fixtures）目录 → 执行生成的虚拟模块 → React Router v8 **静态路由**渲染真实 URL（loaders、boundaries、layouts） |
 
@@ -29,15 +32,25 @@
 | `/cart` | `SHOP-LAYOUT` + `CART` | 无路径分组布局（`(shop)/index.tsx`） |
 | `/dashboard` | `DASHBOARD` | 仅组织用分组（无组件的无路径分组） |
 | `/unknown-path` | `NOTFOUND` | `[...rest].tsx` splat |
+| `/docs`、`/docs/hello` | `CHAPTER` | 可选参数 `[[chapter]].tsx`：无参与带参 URL 都命中同一模块（拆成两条记录） |
+
+v0.2 的其余新能力由独立的 fixture 文件夹 + 选项覆盖：
+
+- `overrides-pages/members/[id].tsx` 通过 `export const route` 把 URL 重写为
+  `/user/:id`（提升为顶层）：`/user/7` 渲染 `MEMBER`，原 `/members/7` 不再匹配；
+- `layout-pages/` + `layoutFile: 'layout'`：根 `layout.tsx` 成为无路径顶层包装，
+  `/` 与 `/about` 都包含 `ROOT-LAYOUT`；
+- `dot-pages/settings.profile.tsx` + `dotNesting: true`：`/settings/profile`
+  渲染 `SETTINGS-PROFILE`。
 
 ## 运行检查
 
 ```bash
 pnpm install
 
-pnpm test         # vitest run — 全部四个测试套件
+pnpm test         # vitest run — 全部七个测试套件
 pnpm typecheck    # 插件源码的 tsc --noEmit
-pnpm build        # tsup: dist/{index,vite}.{js,cjs,d.ts}
+pnpm build        # tsup: dist/{index,vite,webpack,rollup,esbuild}.{js,cjs,d.ts}
 
 # playground
 pnpm dev          # 在 playground/src/pages 上运行 vite dev
@@ -53,7 +66,7 @@ pnpm -C playground build
 ## 如何补充测试覆盖
 
 - 新增文件约定 → 扩展 `tests/tree.test.ts`（解析/插入）与 `tests/generateRouteRecords.test.ts`（输出形态），然后在 `tests/runtime.test.ts` 的 `it.each` 表中加入一个测试夹具页面 + 一行，以覆盖行为层面的保证。
-- 新增选项 → 在 `tests/` 下写一个小测试断言其解析结果，并在 `docs/api.md` 中说明。
+- 新增选项 → 在 `tests/plugin.test.ts` 中断言其解析/接线结果，并在 `docs/api.md` 中说明。
 - v0.1 刻意避免对完整生成模块做快照测试（测试夹具路径因机器而异）；断言针对结构性片段（`path`、`index: true`、导入说明符、确定性）。
 
 ## 贡献指南

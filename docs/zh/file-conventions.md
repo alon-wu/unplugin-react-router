@@ -11,7 +11,10 @@
 - **目录**是一个路径段（除非它是路由组，见 §6），
 - 目录内的**文件**是再多一个路径段的叶子路由，
 - **`index` 文件**是其父路径的"默认内容"，
-- **与所在目录同名的文件**（例如紧挨 `blog/` 的 `blog.tsx`）是该目录路径段的*布局组件*。
+- **与所在目录同名的文件**（例如紧挨 `blog/` 的 `blog.tsx`）是该目录路径段的*布局组件*，
+- 启用 `layoutFile: 'layout'` 后，目录内的 **`layout.tsx`** 也成为该目录路径段的布局组件（§4d），
+- 启用 `dotNesting: true` 后，文件名中的**点**展开为嵌套静态路径段（§5b），
+- `[[x]]` 形式的**可选参数文件**会被拆成"无参路由 + 参数路由"两条记录（§5c）。
 
 示例目录树及其生成的路由：
 
@@ -22,6 +25,8 @@ src/pages/
 ├── users/
 │   ├── index.tsx        →  index route of users                 →  /users
 │   └── [id].tsx         →  dynamic leaf                         →  /users/:id
+├── docs/
+│   └── [[lang]].tsx     →  optional segment                     →  /docs 和 /docs/:lang
 ├── blog.tsx             →  layout of the blog segment           →  /blog (with children)
 └── blog/
     ├── index.tsx        →  index route of blog                  →  /blog
@@ -43,6 +48,13 @@ export const routes = [
     ],
   },
   {
+    path: 'docs',
+    children: [
+      { index: true, lazy: /* docs/[[lang]].tsx — bare /docs */ },
+      { path: ':lang', lazy: /* docs/[[lang]].tsx — /docs/:lang */ },
+    ],
+  },
+  {
     path: 'blog',
     lazy: /* blog.tsx — layout */,
     children: [
@@ -51,7 +63,7 @@ export const routes = [
     ],
   },
   { path: '*', lazy: /* [...rest].tsx */ },
-  // about.tsx sorts before blog/* users/* …
+  // about.tsx sorts before blog/* docs/* users/* …
 ]
 ```
 
@@ -62,9 +74,12 @@ export const routes = [
 | `index`（文件） | 父路径的默认内容 | 父记录的一个 `{ index: true }` **子记录**（位于顶层时匹配 `/`） |
 | `about` | 静态路径段 | `path: 'about'` |
 | `[id]` | 动态参数 | `path: ':id'` |
+| `[[lang]]`（文件） | 可选参数 | 拆成两条记录：父路径的 `{ index: true }` + 同文件的 `path: ':lang'`（两条 URL 都懒加载同一个模块） |
+| `[[...rest]]`（文件） | 可选兜底 | 拆成两条记录：父路径的 `{ index: true }` + 同文件的 `path: '*'` |
 | `[...rest]` | 兜底路由（catch-all） | `path: '*'`（仅可作为**文件**；捕获到的路径值会存入 `params['*']`） |
 | `(admin)` | 无路径**路由组** | 完全没有 `path` 属性 |
-| `a.b` | 点是字面字符 | `path: 'a.b'` |
+| `a.b`（默认） | 点是字面字符 | `path: 'a.b'` |
+| `users.create`（`dotNesting: true`） | 点的两侧展开为嵌套静态段 | `/users/create`（中间段不产生组件/布局） |
 
 参数名与路由组名仅允许 `[A-Za-z0-9_-]`（正则 `[\w-]+`）。
 
@@ -74,15 +89,16 @@ export const routes = [
 
 | 输入 | 原因 |
 | --- | --- |
-| `[[id]]`（可选段） | React Router 没有可选路径段语法；请拆分为 `index` + `[id]` |
-| `[id]+`（可重复段） | 同上；兜底路由（catch-all）文件 `[...rest]` 是最接近的替代 |
+| `[[id]]`（作为**目录**名） | 可选段只支持文件；目录可选请拆成 `[lang]` 目录或手动拆分 |
+| `[id]+`（可重复段） | React Router 不支持；兜底路由（catch-all）文件 `[...rest]` 是最接近的替代 |
 | `prefix-[id]`、`[a][b]`、`x_[id]`（部分参数/多参数） | React Router 的参数须占满整个路径段 |
 | `(name).tsx`（路由组文件） | 路由组是目录；无路径布局请使用 `(name)/index.tsx` |
 | 名为 `[...x]` 的目录 | 兜底路由（catch-all）必须是文件（在目录内使用 `[...x].tsx`） |
 | 名为 `index` 的目录 | 请改为在父目录内放一个 `index` 文件 |
 | 包含 `:` `*` `?` 的静态路径段 | 与 React Router 的路径语法冲突 |
+| `dotNesting` 下 `a..b`、`users.[id]` | 点两侧必须是非空静态名；参数/兜底/路由组须是完整段 |
 
-完整的错误信息见 [API 参考 → 错误](api.md)。
+完整错误信息见 [API 参考 → 错误](api.md)。
 
 ## 3. Index 路由——"默认内容"，而非布局
 
@@ -103,7 +119,7 @@ src/pages/users/
 
 ## 4. 布局
 
-共有三种创建共享 UI 的方式，三者都要求布局组件中显式放置 `<Outlet />`，子内容才会渲染。
+共有四种创建共享 UI 的方式，都要求布局组件中显式放置 `<Outlet />`，子内容才会渲染。
 
 ### 4a. 同名文件与文件夹布局
 
@@ -161,7 +177,36 @@ src/pages/(admin)/
 └── dashboard.tsx  # /dashboard — (admin) contributes no segment and no layout
 ```
 
-## 5. 动态段与兜底路由（catch-all）
+### 4d. 布局特殊文件（`layoutFile` 选项，可选）
+
+启用 `layoutFile: 'layout'` 后，每个目录里的 `layout.tsx` 成为该路径段的布局组件，与 4a 的"同名文件"二选一（两者同时存在会报错）：
+
+```ts
+// vite.config.ts
+reactRouter({
+  layoutFile: 'layout',
+})
+```
+
+```txt
+src/pages/
+├── layout.tsx        # 根布局（pathless wrapper）：包裹下面所有路由（含 /）
+├── blog/
+│   ├── layout.tsx    # blog 段的布局组件（不再需要 blog.tsx）
+│   ├── index.tsx     # /blog
+│   └── [slug].tsx    # /blog/:slug
+└── about.tsx         # /about（渲染在根 layout.tsx 的 <Outlet/> 里）
+```
+
+规则：
+
+- 根目录的 `layout.tsx` 生成一条**无路径顶层路由**，所有其它路由（包括 `/` 的 index 路由）都作为它的子路由渲染（需要 `<Outlet/>`）；
+- 启用期间 `layout` 是保留名：不能再有静态 `/layout` 页面；把该文件名当作页面需要关闭选项或改用路由组；
+- 与 4a 语义一致，路径段级 `layout.tsx` 之外仍可用 `(group)/index.tsx` 做无路径布局。
+
+## 5. 动态段、可选参数、兜底与点嵌套
+
+### 5a. 动态段与兜底路由（catch-all）
 
 ```txt
 src/pages/
@@ -169,8 +214,6 @@ src/pages/
 │   └── [sku].tsx          # /products/:sku
 ├── catalog/
 │   └── [...rest].tsx      # /catalog/*  (any remaining path)
-├── users/
-│   └── [id].edit.tsx      # ⚠️ ERROR — partial segment
 └── [...rest].tsx          # /*          top-level 404 catch-all
 ```
 
@@ -192,6 +235,55 @@ export default function Product() {
 - 兜底路由（catch-all）文件不能包含子路由，也不能是目录。
 - 在同级记录中，兜底路由（catch-all）总是被**最后**输出（React Router 反正会把它排在最低优先级；我们借此保证输出确定性）。
 
+### 5b. 点嵌套（`dotNesting: true`，可选）
+
+启用后，文件名中的点展开为**嵌套静态路径段**（不产生任何 UI 嵌套或布局）：
+
+```ts
+reactRouter({ dotNesting: true })
+```
+
+```txt
+src/pages/
+├── settings.profile.tsx     # /settings/profile —— 一条叶子路由，无中间布局
+└── admin.users.index.tsx    # /admin/users —— 最后一段是 index 语义
+```
+
+规则：
+
+- 点两侧必须是**非空静态名**（`[A-Za-z0-9_-]` 之外允许普通 Unicode 字符，但不得包含 `:` `*` `?` `[` `]` `(` `)`）；
+- 参数/兜底/路由组必须保持完整段：写 `users/[id].tsx`，不要写 `users.[id].tsx`；
+- 与同路径的目录/同名文件冲突时按既有规则报错（Duplicate layout 等）；
+- 关闭该选项时，点按字面字符处理：`a.b.tsx` → `/a.b`（v0.1 行为）。
+
+### 5c. 可选参数 `[[x]]`（文件级）
+
+`[[lang]].tsx`（或 `[[...rest]].tsx`）表示这段路径**可有可无**：插件自动拆成两条路由，都懒加载同一个模块：
+
+```txt
+src/pages/docs/
+└── [[lang]].tsx
+```
+
+等价于：
+
+```js
+{
+  path: 'docs',
+  children: [
+    { index: true, lazy: /* docs/[[lang]].tsx — /docs */ },
+    { path: ':lang', lazy: /* docs/[[lang]].tsx — /docs/:lang */ },
+  ],
+}
+```
+
+规则：
+
+- **只支持文件**：`[[lang]]` 作为目录名会报错；
+- 目录里已有 `index.tsx` 时不能再放 `[[lang]].tsx`（无参 URL 已被 index 占据）→ Duplicate index 错误；
+- `[[x]]` 与 `[x]` 并存（同目录）会冲突报错；
+- 可选文件的 `export const route` 只允许 `handle`（`path`/`caseSensitive` 语义不明会被拒绝，见 [路由模块](route-modules.md)）。
+
 ## 6. 路由组 `(name)`
 
 - 路由组**不贡献**任何路径段。
@@ -202,14 +294,15 @@ export default function Product() {
 ```txt
 src/pages/
 ├── (auth)/
-│   ├── layout.tsx?  # ✗ not special — groups have no layout file convention;
-│   │                #   use (auth)/index.tsx for the layout component
+│   ├── layout.tsx?  # ✗ 默认不是特殊文件——(auth)/index.tsx 才是组布局
 │   └── login.tsx    # /login
 └── (docs)/
     ├── index.tsx    # pathless layout for /guides, /reference
     ├── guides.tsx   # /guides
     └── reference.tsx# /reference
 ```
+
+> 若启用了 `layoutFile`，`(name)/layout.tsx` 也能充当组布局，但不能与 `(name)/index.tsx` 同时存在（两者都声称拥有组的无路径布局）。
 
 ## 7. 多个路由文件夹与前缀
 
@@ -235,8 +328,9 @@ reactRouter({
 
 - `path` 以 `/` 拼接，**不能**以 `/` 开头，且可包含 `[param]` 路径段（它们与目录路径段一样被解析）。它会创建不含组件的前缀记录——子路由直接透传渲染（无布局）。
 - 各文件夹按顺序被扫描进同一棵树。不同文件夹之间的相同路由会产生重复文件错误（见"错误"一节）；请使用不同的前缀。
-- 各文件夹的 `extensions` / `exclude` 会覆盖全局配置（传入函数可以基于全局值扩展，而非替换它）。
+- 各文件夹的 `extensions` / `exclude` / `filePatterns` 会覆盖全局配置（传入函数可以基于全局值扩展，而非替换它）。
 - `exclude` 的 glob 模式**相对于各文件夹的 `src`**（picomatch 语法），例如 `['**/ignored/**']`。
+- `filePatterns`（可选）是**正向**过滤：给出后，只有匹配其中任意一个 glob 的文件才被认为是页面文件（匹配的是相对路径、含扩展名）。例如 `{ src: 'src/pages', filePatterns: ['**/*.page.tsx'] }` 只把 `.page.tsx` 当页面。空数组会报错（等于没有任何文件匹配）。
 
 ## 8. 自定义扩展名
 
@@ -257,7 +351,8 @@ reactRouter({
 生成的记录按确定性规则排序：
 
 - 同级记录按原始名称排序（字符串顺序），
-- 兜底路由（catch-all）永远排在最后。
+- 兜底路由（catch-all）永远排在最后，
+- 被绝对 `path` 覆盖提升到顶层的记录按其路径字符串排序。
 
 同一组页面文件总是产出逐字节一致的输出（有单元测试验证），从而保证快照与 diff 的稳定。
 
@@ -269,30 +364,15 @@ reactRouter({
 | `users.vue` + `users/` 嵌套 | `users.tsx` + `users/` → 布局 | 布局需要 `<Outlet/>` |
 | `[id].vue` | `[id].tsx` | 相同 |
 | `[...path].vue` → `/:path(.*)` | `[...rest].tsx` → `'*'` | 参数名不同（`'*'`） |
-| `[[id]].vue`、`[id]+.vue` | ❌ 不支持 | React Router 无法表达它们 |
+| `[[id]].vue`（可选） | `[[id]].tsx` → index + `:id` 两条记录 | React Router 无可选段语法，用拆分表达 |
+| `[id]+.vue`（可重复） | ❌ 不支持 | React Router 无法表达 |
 | `prefix-[id].vue`（部分参数） | ❌ 不支持 | 参数须占满整个路径段 |
 | `(group)/` 目录 | `(group)/` 目录 | 这里的 group `index` 表示布局，而非默认内容 |
-| `users.create.vue` 点号嵌套 | 点号原样保留 | 不隐式按 `/` 拆分（v0.1） |
+| `users.create.vue`（点号嵌套，属于 Nuxt 风格） | 默认点原样保留；`dotNesting: true` 时展开为 `/users/create` | React Router 无路径级组件，故只有无 UI 嵌套展开 |
 | 具名视图 `index@aux.vue` | ❌ 不支持 | React Router 中没有 Vue 具名视图 |
-| `<route>` 块 / `definePage` | 模块具名导出 | 见 [路由模块](route-modules.md) |
-| 路由**名称** + 类型化 router | 无名称 | React Router 没有命名路由 |
+| `<route>` 块 / `definePage` | 模块具名导出 + `export const route` 覆盖 | 见 [路由模块](route-modules.md) |
+| 路由**名称** + 类型化 router | 无名称；提供 `AppRoutePath`/`RouteParams` 类型面 | React Router 没有命名路由 |
 
 ## 11. Playground 示例
 
-仓库中的 playground（`playground/src/pages`）实践了上述每一条规则——index、参数、兜底路由（catch-all）、路由组布局、仅整理用路由组、同名布局——是每种约定应如何使用的参照：
-
-```txt
-playground/src/pages/
-├── index.tsx
-├── about.tsx
-├── users/index.tsx
-├── users/[id].tsx
-├── blog.tsx
-├── blog/index.tsx
-├── blog/[slug].tsx
-├── (shop)/index.tsx
-├── (shop)/cart.tsx
-├── (shop)/checkout.tsx
-├── (admin)/dashboard.tsx
-└── [...rest].tsx
-```
+仓库中的 playground（`playground/src/pages`）实践了 index、参数、兜底路由（catch-all）、路由组布局、仅整理用路由组、同名布局等约定。单元测试与 SSR 端到端测试的 fixtures（`tests/fixtures/`）额外覆盖了可选参数 `[[chapter]]`、`path` 覆盖、根 `layout.tsx` 与点嵌套页面——它们是最新的可运行参考。

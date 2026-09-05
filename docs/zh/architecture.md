@@ -3,7 +3,8 @@
 # 架构
 
 本页说明插件内部如何工作、为何这样设计、它与 `unplugin-vue-router`
-的异同，以及当前已知的限制与尚未完成的部分。
+的异同，以及当前已知的限制与尚未完成的部分。**本文档描述 v0.2**；v0.1 架构
+文档里"已知限制/路线图"所列各项大多已在 v0.2 落地（见文末对照表）。
 
 ## 动机与设计目标
 
@@ -14,12 +15,12 @@ React Router v8（数据模式）非常适合基于文件的路由：一张路�
 
 | uvr 构件 | React 能否复用？ | 如何复用 |
 | --- | --- | --- |
-| 文件夹扫描 + 路由树（`PrefixTree`） | ✅ 可以 | 相同的树模型，只是输出的段（segment）语法不同 |
+| 文件夹扫描 + 路由树 | ✅ 可以 | 相同的树模型，只是输出的段（segment）语法不同 |
 | `codegen`（tree → 源码文本） | ✅ 可以 | 我们生成 `RouteObject` 字面量，而非 `RouteRecordRaw` |
 | 虚拟模块（`vue-router/auto-routes`） | ✅ 可以 | 对应 `unplugin-react-router/routes` |
-| 监视器 + 模块失效 | ✅ 可以（机制层面） | 轮询 + `reloadModule`/整页刷新 |
-| `definePage` / `<route>` 代码块解析 | ❌ 不需要 | 约定是 TSX 模块的具名导出 |
-| 类型化路由表（`typed-router.d.ts` 路由名） | ⚠️ 不可移植 | React Router 没有具名路由——参见[类型设计](architecture.md) |
+| 监视器 + 模块失效 | ✅ 可以（机制层面） | dev-server watcher 事件 + 轮询兜底 |
+| `definePage` / `<route>` 代码块解析 | ⚠️ 换一种形式 | TSX 模块具名导出 + 构建期提取 `export const route` |
+| 类型化路由表（typed router） | ⚠️ 换一种形式 | `AppRoutePath` / `RouteParams<P>` 类型面（无具名路由，见下） |
 | `data-loaders` 子系统 | ❌ 不需要 | `loader`/`action` 是 React Router 的原生能力 |
 
 **目标**：SPA 数据模式、Vite 优先、使用原生 `react-router`、不带框架运行时；
@@ -32,24 +33,26 @@ React Router v8（数据模式）非常适合基于文件的路由：一张路�
   文件路由、但又不愿采用整套框架的应用。
 - **vite-plugin-react-router-fs**（社区插件）：扫描文件夹并*写出实体*
   `routes.ts`。其约定不同（`layout.tsx`/`guard.tsx` 等特殊文件）。本插件
-  改用虚拟模块，遵循 uvr 风格的惯例。
+  改用虚拟模块，遵循 uvr 风格的惯例（并可选支持 `layout.tsx` 风格）。
 
 ## 顶层数据流
 
 ```txt
 pages/*.tsx ──scan──▶ route tree ──codegen──▶ TS/JS source ──virtual module──▶ app
-
-  build/dev start             + add/remove page files (dev)
-        │                                    │
-        ▼                                    ▼
-  scanPages()  ◀─────────────  polling scanner (300ms signature diff)
-        │
-        ├─▶ rebuild tree (from scratch, deterministic)
-        ├─▶ if structure changed:
-        │      server.invalidateRoutes()   (reload virtual module)
-        │      server.reload()             (full page reload)
-        └─▶ writeDTS() (typed-routes.d.ts, only on content change)
+    │                        │
+    │ read source,           │
+    │ extract route config   └──▶ typed-routes.d.ts (AppRoutePath / RouteParams…)
+    ▼
+  addFileToTree()  ◀── add/unlink (dev) 或 watch 轮询兜底
 ```
+
+`scanPages()`（全量、确定性）：
+
+1. 按 folder 递归收集页面文件（`extensions` + `exclude` + `filePatterns`）；
+2. 逐文件读取源码并**提取路由配置**（`export const route`，纯字面量）与
+   文件树约定（可选参数拆分、点嵌套、`layout.tsx`）一起插入路由树；
+3. 树完整后做一次**配置放置校验**（叶子 vs 布局的最终角色只有此时确定）；
+4. 结构变化时使虚拟模块失效并整页刷新；重写 `typed-routes.d.ts`。
 
 `getRoutes()`（虚拟模块的 `load`）是惰性的：只在模块被请求时才序列化当前
 路由树，因此一次扫描开销很低，且失效之后模块总能保持最新。
@@ -58,67 +61,73 @@ pages/*.tsx ──scan──▶ route tree ──codegen──▶ TS/JS source �
 
 ```txt
 src/
-├── index.ts                unplugin factory entry (generic bundlers, no dev server)
-├── vite.ts                 re-exports the native Vite plugin
-├── vitePlugin.ts           the real Vite plugin (recommended entry)
+├── index.ts                unplugin factory entry（通用打包器）
+├── vite.ts / vitePlugin.ts 原生 Vite 插件（watcher 接线 + 轮询兜底）
+├── webpack.ts / rollup.ts / esbuild.ts   子路径适配入口
 ├── options.ts              Options / RoutesFolderOption, defaults, resolution
 ├── codegen/
 │   ├── generateRouteRecords.ts   tree → virtual module source (pure function)
-│   └── generateDTS.ts            content of typed-routes.d.ts
+│   ├── generateDTS.ts            typed-routes.d.ts 内容
+│   └── collectPaths.ts           树 → 每条可达 URL（供类型面使用）
 ├── core/
 │   ├── moduleConstants.ts  virtual module ids & \0 helpers
-│   ├── tree.ts             segment parser + TreeNode + addFileToTree
-│   ├── context.ts          routes context: scan/write/dts/generate, server API
-│   └── watch.ts            watcher attachment + polling scanner
+│   ├── tree.ts             segment parser + TreeNode + addFileToTree + validate
+│   ├── routeConfig.ts      `export const route` 的源码级静态提取
+│   ├── context.ts          routes context: scan/write/dts/generate
+│   └── watch.ts            watcher attach + polling scanner + 匹配器
 └── utils/
-    ├── index.ts            string/path/indent helpers
-    └── packageCheck.ts     "is a package installed" (typescript detection)
+    ├── index.ts            字符串/路径/缩进 helpers
+    └── packageCheck.ts     "is a package installed"
 ```
 
-运行时依赖有意保持最少：`unplugin`（仅由通用入口使用）与 `picomatch`
-（用于排除匹配）。`chokidar` 是仅供测试使用的开发依赖。
-`react-router`/`vite` 是对等依赖（peer dependencies）。
+运行时依赖刻意最少：`unplugin`（仅通用入口使用）与 `picomatch`（排除与
+`filePatterns` 匹配）。`chokidar` 只用于测试。`react-router`/`vite` 是对等
+依赖（peer dependencies）。
 
-## 路由树模型
+## 路由树模型与插入规则
 
-`TreeNode`（`src/core/tree.ts`）携带生成一个路由对象所需的全部信息：
+`TreeNode` 携带生成一条路由所需的全部信息（`src/core/tree.ts`）：
 
 ```ts
 interface TreeNode {
-  rawSegment: string                 // on-disk name ('users', '[id]', '(admin)', '')
+  rawSegment: string            // on-disk name ('users', '[id]', '(admin)', '')
   kind: 'group' | 'static' | 'param' | 'splat'
-  pathSegment: string                // React Router form: ':id', '*', raw, or '' (pathless)
-  file: string | null                // same-name layout file OR leaf page module (abs path)
-  indexFile: string | null           // 'index' module of this node (abs path)
+  pathSegment: string           // React Router form: ':id', '*', raw, or '' (pathless)
+  file: string | null           // layout/leaf module（layout.tsx 或叶子文件）
+  fileConfig?: PageRouteConfig  // 该文件的 export const route
+  indexFile: string | null      // index 模块（绝对路径）
+  indexConfig?: PageRouteConfig
   children: Map<string, TreeNode>
+  parent: TreeNode | null
 }
 ```
 
-插入（`addFileToTree`）**无论文件顺序如何**，都能解决三种特殊情况：
+`addFileToTree` 在插入时解决四类特殊情况：
 
-1. `index` 文件 → 以 `indexFile` 的形式存到父节点上。
-2. 原始名称已作为目录存在的文件 → 成为该目录的 `file`（即“同名布局”，
-   same-name layout）。
-3. 之后在某个叶子节点下新建目录 → 该叶子保留自己的 `file`，同时获得
-   `children`（它会自动成为一个布局）。
+1. `index` 文件 → 挂到父节点 `indexFile`；
+2. 原名称已是目录的文件 → 成为该目录的 `file`（同名布局）；
+3. 之后在叶子下新建目录 → 叶子保留 `file` 并长出 `children`（自动变布局）；
+4. **可选参数文件** `[[x]]`/`[[...x]]` → 在同一节点注册 `indexFile`（无参
+   URL）**并**新建 `[x]`/`[...x]` 子节点，两者 `file` 都指向同一个模块；
+   同时（启用时）`layout.tsx` → 当前目录节点的 `file`。
 
-解析时会预先校验能否用 React Router 表达，无法表达则抛出描述性错误
-（完整列表见 [API 参考 → Errors](api.md)）。
+`validateTreeConfig()` 在**整棵树完成后**校验路由配置的放置：`path` 覆盖只
+允许真正叶子；index 不允许 `caseSensitive`；路由组不允许 `layout.tsx` 与
+`index.tsx` 布局并存等。
 
 ## 代码生成规则（tree → RouteObject）
 
-`generateRouteRecords.ts` 遍历路由树并输出纯 JS。每个节点对应的产物：
+`generateRouteRecords.ts` 遍历路由树输出纯 JS，并处理 v0.2 的三类特殊记录：
 
-| 节点 | 生成的记录 |
+| 场景 | 产物 |
 | --- | --- |
-| 带 `indexFile` 的根 | 顶层 `{ index: true, lazy }`（匹配 `/`） |
-| 静态/参数叶子文件 | `{ path: '<seg>', lazy }` |
-| splat 文件 | `{ path: '*', lazy }` |
-| 无 `file` 但带 `indexFile` 的目录 | `{ path, children: [ { index: true, lazy }, …children ] }` —— 无组件的父节点，子节点直接渲染透传 |
-| 带 `file` 的目录（布局） | `{ path, lazy: layout, children: [ { index: true, lazy }?, …children ] }` |
-| 带 `indexFile` 的分组 | 无路径布局（pathless layout）`{ lazy, children }` |
-| 不带 `indexFile` 的分组 | 无组件、无路径的 `{ children }` |
-| 空节点 | 跳过 |
+| 普通静态/参数叶子 | `{ path, lazy }` |
+| 可选 `[[x]]` 文件 | 目录下 `{ index: true, lazy }` + `{ path: ':x', lazy }`（同一模块） |
+| 绝对 `path` 覆盖（以 `/` 开头） | 该叶子被**提升为顶层路由**；若其磁盘父目录因此不再有任何记录，父目录也不生成（React Router 不允许子记录嵌套不一致的绝对路径） |
+| 相对 `path` 覆盖 | 仅替换该记录的 `path` 值 |
+| `caseSensitive` / `handle` 覆盖 | 静态输出到记录字段 |
+| 根 `layout.tsx`（layoutFile） | 无路径顶层包装，包裹根 index、普通记录与提升记录 |
+| 点嵌套（dotNesting） | 中间静态段仅贡献 URL（无 file 无 index） |
 
 为每个页面模块生成的 lazy 加载器：
 
@@ -126,134 +135,116 @@ interface TreeNode {
 lazy: async () => { const m = await import('/abs/…/page.tsx'); return { Component: m.default, ...m } }
 ```
 
-- 虚拟模块内部使用绝对 POSIX 导入路径（Vite 原生写法）。
+- 虚拟模块内部使用绝对 POSIX 导入路径。
 - 模块源码是纯 JS：虚拟 id 没有扩展名，打包器会按 JS 解析。任何 TS 语法
-  （`import type`、`satisfies`）都会破坏解析——类型改放在环境声明
-  （ambient declaration）中。
-- 输出是确定性的：同级按名称排序，splat 排在最后（已有单元测试覆盖）。
+  （`import type`、`satisfies`）都会破坏解析——类型放在环境声明中。
+- 输出确定：同级按名称排序、splat 最后、提升记录按路径排序。
 
-## 虚拟模块
+## 路由配置提取（`export const route`）
 
-- 公开 id：`unplugin-react-router/routes`
-- `resolveId` 将其映射为 `\0unplugin-react-router/routes`
-- `load` 返回 `ctx.getRoutes()`（按需生成）
-- 除页面模块外没有任何运行时导入；`react-router` 只以类型形式出现在生成的
-  环境 `.d.ts` 中
+因为 React Router 禁止 `lazy` 修改静态字段，路径/大小写覆盖必须在构建期
+知道。`routeConfig.ts` 对每个页面文件做一次**源码级静态提取**：
 
-## 生命周期
+- 只认顶层 `export const route = <对象字面量>`；
+- 扫描器跳过字符串、模板串与注释，因此组件代码/文案里的同名片段不会误匹配；
+- 值仅允许字面量（字符串/数字/布尔/null/嵌套数组对象）；标识符、函数调用、
+  模板串、展开、拼接都会带文件路径硬报错；
+- 未知键、重复键、重复导出均报错（防拼写错误被静默吞掉）。
 
-**Vite 插件（`vitePlugin.ts`）**
+> 我们刻意不引入 Babel/编译器依赖：这是纯文本解析，几十行、可穷举测试。
+> 代价是**不支持计算值**——需要计算的值请放进 `loader` 或写成字面量。
 
-1. `buildStart` → `ctx.scanPages()`：完整遍历每个路由文件夹，构建路由树，
-   写出 dts。
-2. `configureServer`（开发模式）→ 注册服务器上下文（通过
-   `server.moduleGraph` + `server.reloadModule` 实现 `invalidateRoutes`；
-   通过 `server.ws.send({ type: 'full-reload' })` 实现整页刷新 `reload`），
-   并启动轮询扫描器。
-3. `load('…/routes')` → 序列化当前路由树。
-4. `buildEnd` / 服务器关闭 → 停止扫描器。
+## 类型面（与 uvr typed-router 的差异）
 
-**重新扫描（新增/删除页面文件，仅开发模式）**
+`unplugin-vue-router` 的类型化路由表可行，是因为 Vue Router 有**具名路由**与
+全局类型注册（`declare module 'vue-router'`）。React Router 两者都没有，因此
+v0.2 提供的是贴近 React 生态的类型面：
 
-`createPollingScanner` 每 300 ms 比较一次签名（各路由文件夹下页面文件的
-排序列表）。检测到变化后调用 `scanPages()`，后者会：
+1. `typed-routes.d.ts` 声明虚拟模块 `routes: RouteObject[]`（同 v0.1）；
+2. **`AppRoutePath`** —— 所有可达 URL 的字面量联合（`collectPaths.ts` 从树
+   收集，与 codegen 共享同一棵树，不会漂移）；
+3. **`AppRouteParams` / `RouteParams<P>`** —— 逐路由参数形状，喂给
+   `useParams<RouteParams<'/users/:id'>>()`；
+4. **`RouteConfig`** —— `export const route` 的标注类型；
+5. **`LoaderData<T>`** —— `useLoaderData<LoaderData<typeof loader>>()` 的便捷
+   别名。
 
-- 从头重建整棵路由树（页面文件夹通常很小，简单优先）；
-- 比较签名，并且只有*结构*发生变化时：使虚拟模块失效并请求整页刷新
-  （这样 `createBrowserRouter(routes)` 会拿着新路由表重新执行）；
-- 仅在内容变化时重写 `typed-routes.d.ts`。
+不对 `useLoaderData`/`Link` 做全局推断（那需要带生成类型的自定义路由，即
+TanStack Router 的做法）——这仍是本插件的边界；文档指导用户在组件里显式
+传入字面量路径泛型。
 
-页面文件内部的纯内容编辑**绝不会**触发重新扫描：该文件本就属于路由表，
-该模块自身的组件 HMR 由 Vite 处理。
-
-## 开发 / HMR 行为——与已知限制
+## 开发 / HMR 行为（v0.2）
 
 **能正常工作的**
 
 - 编辑已有页面：该页面模块走标准 Vite HMR（插件不干预）。
-- 首次加载与生产构建：已由测试完整覆盖。
+- 首次加载与生产构建：由单元测试与 SSR 端到端测试覆盖。
+- 新增/删除/重命名页面文件：`configureServer` 把
+  `attachPageWatcher` 挂到 `server.watcher` 上，`add`/`unlink` 事件（且文件
+  是页面文件、未被排除）触发去抖后的重新扫描 → 使虚拟模块失效并整页刷新，
+  让 `createBrowserRouter(routes)` 以新路由表重跑。
 
-**尚未完善的**
+**watch 策略（`Options.watch`）**
 
-结构性重新扫描路径（新增/删除/重命名页面文件）*尚未在每个环境下的真实
-开发会话中得到验证*。`src/core/watch.ts` 中存在两种实现：
+- `true`（默认）：有 dev-server watcher 就用事件驱动；没有任何可用 watcher
+  时自动回退到轮询扫描器。
+- `'polling'`：强制轮询（每 300 ms 比较各文件夹的页面文件签名）。Vite 8 /
+  Rolldown 的某些环境里，从插件内部注册的 watcher 监听曾出现收不到事件的
+  问题——遇到此类情况请显式使用 `'polling'`。
+- `false`：完全关闭（结构性改动需重启 dev server）。
 
-- `attachPageWatcher` —— 绑定打包器监视器（`server.watcher`），并过滤
-  `add`/`unlink` 事件；
-- `createPollingScanner` —— 每 300 ms 轮询页面文件夹（默认）。
-
-两者都做了独立的单元测试，`configureServer` 默认启动的也正是轮询扫描器。
-不过，在针对 Vite 8（Rolldown）开发的过程中，我们观察到 `server.watcher`
-触发的事件并不能可靠地到达从插件 `configureServer` 内部注册的监听器
-（同级插件中直接注册的监听器能够收到事件，这指向打包器/监听器的管道
-（plumbing）细节问题，而非逻辑缺陷）；而且在同一环境下，轮询定时器也
-从未触发。症状是：新增页面文件后，路由表可能一直不更新，直到重启开发
-服务器。
-
-**目前的临时方案**：结构性文件变更后重启开发服务器。
-
-**计划中的修复**：改由 Vite 自身的变更管道驱动结构性重新扫描
-（`handleHotUpdate` + 文件夹 mtime 签名），并在 Vite 8 上用真实浏览器的
-端到端测试（Playwright）验证。参见[路线图](architecture.md)。
-
-## 类型设计及与 uvr 的差异
-
-`unplugin-vue-router` 的类型化路由表（typed router）之所以可行，是因为
-Vue Router 有**具名路由**和一套全局类型注册机制
-（`declare module 'vue-router'`）。React Router 两者都没有，因此对应的
-机制无法移植。取而代之，我们暴露的类型面（type surface）是：
-
-1. **类型化路由表** —— 环境声明对外暴露 `routes: RouteObject[]`。
-2. **类型化页面模块** —— `loader`/`action` 的参数类型来自
-   `react-router`；获取数据时使用官方的
-   `useLoaderData() as Awaited<ReturnType<typeof loader>>` 模式。
-3. **不对 `useLoaderData`/`Link` 的路径做全局推断** —— 那需要带生成
-   类型的自定义路由（即 TanStack Router 的做法），对于输出普通
-   `RouteObject[]` 的 unplugin 来说不在范围内。
-
-未来方向：生成路径字面量联合类型（`type AppRoutes = '/' | '/users/:id' | …`）与逐路由的参数类型，从而通过小型辅助函数为 `useParams`/`useMatches` 提供类型——仍然无需改动 React Router 本身。
+页面文件内部的纯内容编辑**绝不会**触发重新扫描：该文件本就属于路由表，
+该模块自身的组件 HMR 由 Vite 处理。
 
 ## 对比：本插件与 unplugin-vue-router 的内部实现
 
-| 关注点 | unplugin-vue-router | unplugin-react-router (v0.1) |
+| 关注点 | unplugin-vue-router | unplugin-react-router (v0.2) |
 | --- | --- | --- |
 | 框架 | Vue Router ≥ 4.4 | React Router v8（数据模式） |
-| 扫描 | chokidar + tinyglobby | 纯 `fs.readdir` 遍历 + 轮询（开发模式） |
-| 树 | `PrefixTree` + `TreeNodeValue`（视图覆盖、查询参数、命名） | 简化的 `TreeNode`（file/indexFile/children） |
-| 代码生成 | 逐节点的 Vue 路由记录（route record）+ `_mergeRouteRecord` | 逐节点的 `RouteObject` 字面量 + lazy 包装 |
-| 宏 | `definePage`（babel 转换）+ `<route>` 代码块 | 无——具名模块导出即为约定 |
-| 类型 | `typed-router.d.ts` + Vue Router 模块扩展（augmentation） | 面向虚拟模块的环境 `typed-routes.d.ts` |
-| 数据加载 | 实验性的 `data-loaders` 包 | 原生 `loader`/`action` |
-| 路由 HMR | `router.addRoute/removeRoute` + 自定义 HMR 处理器 | 模块失效 + 整页刷新（结构性重扫待定） |
-| 打包器 | unplugin（vite/webpack/rolldown/…） | Vite 原生入口 + 通用 unplugin 工厂 |
+| 扫描 | chokidar + tinyglobby | `fs.readdir` 遍历 + dev-server watcher / 轮询兜底 |
+| 树 | `PrefixTree` + `TreeNodeValue`（视图覆盖、查询参数、命名） | 简化 `TreeNode`（file/indexFile/config/children） |
+| 代码生成 | 逐节点 Vue 路由记录 + `_mergeRouteRecord` | 逐节点 `RouteObject` + lazy 包装（含提升/可选拆分） |
+| 宏 | `definePage`（babel 转换）+ `<route>` 代码块 | `export const route` 字面量 + 源码级静态提取 |
+| 类型 | `typed-router.d.ts` + Vue Router 模块扩展 | `typed-routes.d.ts` + `AppRoutePath`/`RouteParams`/`RouteConfig`/`LoaderData` |
+| 数据加载 | 实验性 `data-loaders` | 原生 `loader`/`action` |
+| 路由 HMR | `router.addRoute/removeRoute` | 模块失效 + 整页刷新（事件驱动或轮询） |
+| 打包器 | unplugin（vite/webpack/rolldown/…） | vite 原生 + unplugin 工厂（webpack/rollup/esbuild 子路径） |
 
-## 已知限制（汇总）
+## 已知限制（v0.2）
 
-1. **开发时结构性重扫尚未验证**（见上文）——新增/删除/重命名页面文件后
-   需重启开发服务器。
-2. **不支持的段语法** —— 可选（`[[x]]`）、可重复（`[x]+`）、部分
-   （`a-[x]`）参数；这些会在扫描时抛出异常。
-3. **页面文件不能导出 `middleware`** —— React Router 禁止通过 lazy 函数
-   形式提供中间件（详见[路由模块](route-modules.md)）。
-4. **无具名路由 / 无类型化路由表** —— React Router API 带来的结构性结果
-   （见上文的类型设计）。
-5. **点嵌套（dot-nesting）**（`users.create.tsx` → `/users/create`，不产生
-   UI 嵌套）尚未实现：`.` 按字面字符处理。uvr 的语义与此不同。
-6. **`_inspect`** 已预留，但尚未应用到虚拟 id 上。
-7. 版本策略：v0.1 仅面向 `react-router@8`（对等依赖）。框架模式与 SSR
-   集成按设计不在范围内。
+1. **部分参数不可表达**：可重复（`[id]+`）、部分（`prefix-[id]`）、目录级
+   可选（`[[x]]/`）不支持——React Router 路径语法无法表达；可选参数只支持
+   文件级并拆成两条路由。
+2. **`middleware` 无法经页面文件提供**：React Router 只允许 `lazy` 的
+   *对象*形式提供中间件；我们的函数形式被其明确禁止（见
+   [路由模块](route-modules.md)）。
+3. **无具名路由 / 无 `useLoaderData`/`Link` 全局推断**：React Router 结构性
+   差异（见"类型面"）。
+4. **绝对 `path` 覆盖会脱离其磁盘父目录**：提升为顶层后不再被中间层目录布局
+   包裹（仍会被根 `layout.tsx` 包裹）；这不是 bug，是 React Router 的路径
+   约束。
+5. **`layout.tsx` 与点嵌套默认关闭**：需要显式开启 `layoutFile`/`dotNesting`
+   （同名文件布局与字面点号是默认且向后兼容的约定）。
+6. 版本策略：v0.2 面向 `react-router@8`（对等依赖）与 Node ≥ 20.19。框架模式
+   与 SSR 运行时不内置（产物为纯 `RouteObject[]`，可自行用于 SSR/SSG）。
 
-## 路线图
+## v0.1 路线图 → v0.2 落地对照
 
-- **开发可靠性**：经由 Vite 自身的管道做结构性重扫 + Vite 8 上的浏览器
-  端到端测试（最高优先级）。
-- 按文件的路由级覆盖（`path`、`caseSensitive`、自定义 `handle` 合并），
-  作为与 uvr `<route>` 代码块等价的有类型导出。
-- 按文件夹的 `filePatterns`；点嵌套（dot-nesting）；可选参数自动拆分为
-  两条路由。
-- 类型：生成的路径字面量联合、面向 `useParams` 的参数辅助函数，以及便捷的
-  `LoaderData` 类型。
-- 布局特殊文件约定（`layout.tsx`），以可选开启的方式提供。
-- 通过 `unplugin` 支持 Rollup/rolldown 的 watch（使用
-  `attachPageWatcher`）。
-- 发布基础设施（changesets、CI、npm provenance）。
+| v0.1 路线图条目 | 状态 |
+| --- | --- |
+| Vite 自身管道驱动的结构性重扫 | ✅ dev-server watcher + `watch: 'polling'` 兜底；Vite 8 真实浏览器 E2E 待跑（测试用 dev-server 级集成覆盖） |
+| 按文件路由级覆盖（path/caseSensitive/handle） | ✅ `export const route`（静态提取） |
+| 按文件夹 `filePatterns` | ✅ `RoutesFolderOption.filePatterns` |
+| 点嵌套（dot-nesting） | ✅ `dotNesting: true` |
+| 可选参数自动拆分为两条路由 | ✅ `[[x]].tsx` / `[[...x]].tsx` |
+| 类型：路径字面量联合、useParams 参数辅助、LoaderData | ✅ `AppRoutePath` / `RouteParams<P>` / `LoaderData<T>` |
+| 布局特殊文件 `layout.tsx`（可选开启） | ✅ `layoutFile: 'layout'` |
+| 通过 `unplugin` 支持 Rollup/rolldown watch | ✅ rollup/rolldown 重建自带重扫 + `./rollup` 等子路径 |
+| 发布基础设施（changesets、CI、npm provenance） | ✅ 已加入 |
+
+## 仍待探索
+
+- Vite 8（Rolldown）上的真实浏览器（Playwright）端到端矩阵；
+- 在部分 Vite 8 环境中 watcher 事件不可靠的根治（当前用 `'polling'` 兜底）；
+- 更细粒度的"路由模块拆分"（loader 与组件分 chunk）；
+- 与 TanStack Router 风格的自定义类型路由集成（超出现有边界）。

@@ -1,11 +1,17 @@
 import { promises as fs } from 'node:fs'
 import { dirname, sep } from 'node:path'
-import picomatch from 'picomatch'
 import type { ResolvedOptions } from '../options'
-import { addFileToTree, createRootNode, printTree, type TreeNode } from './tree'
+import {
+  addFileToTree,
+  createRootNode,
+  printTree,
+  validateTreeConfig,
+  type TreeNode,
+} from './tree'
 import { generateRouteRecords } from '../codegen/generateRouteRecords'
 import { generateDTS } from '../codegen/generateDTS'
-import { createPollingScanner, relToFolder, stripExtension } from './watch'
+import { extractRouteConfig, type PageRouteConfig } from './routeConfig'
+import { createFolderMatcher, relToFolder, stripExtension } from './watch'
 
 /** Minimal server API needed by the plugin (implemented per bundler). */
 export interface ServerContext {
@@ -20,29 +26,36 @@ export interface RoutesContext {
   scanPages: () => Promise<void>
   /** Generate the source of the virtual routes module from the current tree. */
   getRoutes: () => string
-  /** Start polling for page file additions/removals (dev only). */
-  startWatcher: () => void
-  /** Stop watching (no-op when not started). */
-  stopWatcher: () => void
   setServerContext: (server: ServerContext | undefined) => void
+  /** Get the route tree built by the last scan (read-only use). */
+  getRoot: () => TreeNode
 }
 
 function toPosix(p: string): string {
   return p.replace(/\\/g, '/')
 }
 
-async function walkFiles(dir: string): Promise<string[]> {
+/** Recursively list files of a folder that pass the folder's page matcher. */
+async function walkPageFiles(
+  folderSrc: string,
+  matches: (rel: string) => boolean
+): Promise<string[]> {
   const out: string[] = []
-  const dirents = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
-  for (const dirent of dirents) {
-    if (dirent.name.startsWith('.')) continue
-    const full = dir + sep + dirent.name
-    if (dirent.isDirectory()) {
-      out.push(...(await walkFiles(full)))
-    } else if (dirent.isFile()) {
-      out.push(full)
+  const walk = async (dir: string): Promise<void> => {
+    const dirents = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const dirent of dirents) {
+      if (dirent.name.startsWith('.')) continue
+      const full = dir + sep + dirent.name
+      if (dirent.isDirectory()) {
+        await walk(full)
+      } else if (dirent.isFile()) {
+        if (matches(toPosix(full).slice(folderSrc.length + 1))) {
+          out.push(full)
+        }
+      }
     }
   }
+  await walk(folderSrc)
   return out
 }
 
@@ -56,19 +69,35 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
   let signature = ''
 
   let server: ServerContext | undefined
-  let detachWatcher: (() => void) | undefined
+
+  /** Parse the route config (`export const route`) of one page file. */
+  async function readConfig(filePath: string): Promise<PageRouteConfig | undefined> {
+    try {
+      const source = await fs.readFile(filePath, 'utf-8')
+      return extractRouteConfig(source, filePath)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'RouteConfigParseError') {
+        throw error
+      }
+      // unreadable files are simply not pages with a config
+      log('could not read', filePath, error)
+      return undefined
+    }
+  }
 
   /** Scan all routes folders and rebuild the tree from scratch. */
   async function scanPages(): Promise<void> {
     const previousSignature = signature
     const collected: string[] = []
     const newRoot = createRootNode()
+    const treeOptions = {
+      dotNesting: options.dotNesting,
+      layoutFileName: options.layoutFileName,
+    }
 
     for (const folder of options.routesFolder) {
-      const files = await walkFiles(folder.src)
-      const excluded = folder.exclude.length
-        ? picomatch(folder.exclude)
-        : null
+      const matcher = createFolderMatcher(folder)
+      const files = await walkPageFiles(folder.src, matcher.matchesFile)
       const prefixSegs = folder.path
         ? folder.path.split('/').filter(Boolean)
         : []
@@ -78,18 +107,24 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
         const fileName = file.slice(file.lastIndexOf(sep) + 1)
         const stripped = stripExtension(folder, fileName)
         if (stripped === null) continue
-        if (excluded && excluded(rel)) continue
+        const config = await readConfig(file)
 
         const dirSegs = rel.split('/').slice(0, -1)
         addFileToTree(
           newRoot,
           [...prefixSegs, ...dirSegs],
           stripped,
-          toPosix(file)
+          toPosix(file),
+          treeOptions,
+          config
         )
         collected.push(toPosix(folder.src) + ':' + rel)
       }
     }
+
+    // Once every file is inserted a node's final role (leaf vs layout) is
+    // known — enforce config placement rules now.
+    validateTreeConfig(newRoot)
 
     root = newRoot
     signature = [...collected].sort().join('\n')
@@ -113,7 +148,7 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
   async function writeDTS(): Promise<void> {
     const dtsPath = options.dts
     if (!dtsPath) return
-    const content = generateDTS()
+    const content = generateDTS(root)
     const previous = await fs.readFile(dtsPath, 'utf-8').catch(() => '')
     if (previous !== content) {
       await fs.mkdir(dirname(dtsPath), { recursive: true })
@@ -131,21 +166,8 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
       return generateRouteRecords(root)
     },
 
-    startWatcher() {
-      if (detachWatcher || !options.watch) return
-      const scanner = createPollingScanner({
-        folders: options.routesFolder,
-        logger: options.logs
-          ? (message: string) => console.log('[unplugin-react-router]', message)
-          : undefined,
-        onChanged: () => scanPages(),
-      })
-      detachWatcher = scanner.close
-    },
-
-    stopWatcher() {
-      detachWatcher?.()
-      detachWatcher = undefined
+    getRoot() {
+      return root
     },
 
     setServerContext(next) {

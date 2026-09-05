@@ -11,11 +11,17 @@ rules below are implemented in `src/core/tree.ts` and
 
 A routes folder is turned into a **tree of segments**:
 
-- a **directory** is a path segment (unless it is a group, see §6),
+- a **directory** is a path segment (unless it is a route group, see §6),
 - a **file** inside it is a leaf route for one more segment,
 - an **`index` file** is the “default content” of its parent path,
 - a **file named exactly like its directory** (e.g. `blog.tsx` next to
-  `blog/`) is the *layout component* of that directory’s path segment.
+  `blog/`) is the *layout component* of that directory’s path segment,
+- with `layoutFile: 'layout'` enabled, a **`layout.tsx`** inside a directory is
+  also that path segment’s layout component (§4d),
+- with `dotNesting: true` enabled, **dots** in file names expand into nested
+  static path segments (§5b),
+- **optional parameter files** of the form `[[x]]` are split into two records —
+  a “no-param route” plus a “param route” (§5c).
 
 Example tree and the routes it generates:
 
@@ -26,6 +32,8 @@ src/pages/
 ├── users/
 │   ├── index.tsx        →  index route of users                 →  /users
 │   └── [id].tsx         →  dynamic leaf                         →  /users/:id
+├── docs/
+│   └── [[lang]].tsx     →  optional segment                     →  /docs and /docs/:lang
 ├── blog.tsx             →  layout of the blog segment           →  /blog (with children)
 └── blog/
     ├── index.tsx        →  index route of blog                  →  /blog
@@ -47,6 +55,13 @@ export const routes = [
     ],
   },
   {
+    path: 'docs',
+    children: [
+      { index: true, lazy: /* docs/[[lang]].tsx — bare /docs */ },
+      { path: ':lang', lazy: /* docs/[[lang]].tsx — /docs/:lang */ },
+    ],
+  },
+  {
     path: 'blog',
     lazy: /* blog.tsx — layout */,
     children: [
@@ -55,20 +70,23 @@ export const routes = [
     ],
   },
   { path: '*', lazy: /* [...rest].tsx */ },
-  // about.tsx sorts before blog/* users/* …
+  // about.tsx sorts before blog/* docs/* users/* …
 ]
 ```
 
 ## 2. Segment ↔ path mapping
 
-| On disk          | Meaning                      | Generated path / record |
-| ---------------- | ---------------------------- | ----------------------- |
-| `index` (file)   | default content of the parent | an `{ index: true }` **child record** of the parent record (at the top level it matches `/`) |
-| `about`          | static segment               | `path: 'about'` |
-| `[id]`           | dynamic parameter            | `path: ':id'` |
-| `[...rest]`      | catch-all                    | `path: '*'` (only valid as a **file**; the splat value lands in `params['*']`) |
-| `(admin)`        | pathless **group**           | no `path` property at all |
-| `a.b`            | dot is a literal character   | `path: 'a.b'` |
+| On disk             | Meaning                | Generated path / record |
+| ------------------- | ---------------------- | ----------------------- |
+| `index` (file)      | default content of the parent | an `{ index: true }` **child record** of the parent record (at the top level it matches `/`) |
+| `about`             | static segment         | `path: 'about'` |
+| `[id]`              | dynamic parameter      | `path: ':id'` |
+| `[[lang]]` (file)   | optional parameter     | split into two records: an `{ index: true }` of the parent path + a `path: ':lang'` of the same file (both URLs lazy-load the same module) |
+| `[[...rest]]` (file)| optional catch-all     | split into two records: an `{ index: true }` of the parent path + a `path: '*'` of the same file |
+| `[...rest]`         | catch-all              | `path: '*'` (only valid as a **file**; the splat value lands in `params['*']`) |
+| `(admin)`           | pathless **group**     | no `path` property at all |
+| `a.b` (default)     | dot is a literal character | `path: 'a.b'` |
+| `users.create` (`dotNesting: true`) | dots expand into nested static segments | `/users/create` (no component/layout for the middle segments) |
 
 Parameter and group names accept `[A-Za-z0-9_-]` (regex `[\w-]+`).
 
@@ -79,13 +97,14 @@ expressed with React Router path syntax:
 
 | Input | Why |
 | --- | --- |
-| `[[id]]` (optional) | React Router has no optional-segment syntax; split into `index` + `[id]` |
-| `[id]+` (repeatable) | same; a catch-all `[...rest]` file is the closest match |
-| `prefix-[id]`, `[a][b]`, `x_[id]` (partial/multi params) | React Router params occupy a whole segment |
+| `[[id]]` (as a **directory** name) | optional segments are files only; for an optional directory, split into a `[lang]` directory or do it manually |
+| `[id]+` (repeatable) | React Router cannot express it; a catch-all file `[...rest]` is the closest match |
+| `prefix-[id]`, `[a][b]`, `x_[id]` (partial/multi params) | React Router params must occupy a whole segment |
 | `(name).tsx` (group file) | groups are directories; use `(name)/index.tsx` for a pathless layout |
-| directory named `[...x]` | splats must be files (`[...x].tsx` inside a directory) |
+| directory named `[...x]` | catch-alls must be files (use `[...x].tsx` inside a directory) |
 | directory named `index` | put an `index` file inside the parent instead |
 | static segment containing `:` `*` `?` | conflicts with React Router path syntax |
+| `a..b`, `users.[id]` under `dotNesting` | both sides of a dot must be non-empty static names; params/splats/groups must be whole segments |
 
 The exact messages are listed in [API reference → Errors](api.md#errors).
 
@@ -114,7 +133,7 @@ are independent.
 
 ## 4. Layouts
 
-There are three ways to create shared UI, all of them require an explicit
+There are four ways to create shared UI, all of them require an explicit
 `<Outlet />` in the layout component for children to appear.
 
 ### 4a. Same-name file + folder layout
@@ -145,9 +164,9 @@ export default function BlogLayout() {
 - `/blog/hello` renders the layout + `blog/[slug].tsx`.
 
 File order does not matter: the plugin merges a file with a same-named
-directory whenever the second one appears during the scan.
+directory whenever the two appear together during the scan.
 
-### 4b. Pathless group layout
+### 4b. Pathless route group layout
 
 ```txt
 src/pages/(shop)/
@@ -156,28 +175,64 @@ src/pages/(shop)/
 └── checkout.tsx  # /checkout
 ```
 
-Groups do not add URL segments, so the group’s `index.tsx` is a **pathless
-layout**: `/cart` renders `(shop)/index.tsx` (with `<Outlet/>`) wrapping
-`cart.tsx`, while the URL stays `/cart`.
+Route groups do not add URL segments, so the group’s `index.tsx` is a
+**pathless layout**: `/cart` renders `(shop)/index.tsx` (with `<Outlet/>`)
+wrapping `cart.tsx`, while the URL stays `/cart`.
 
 ### 4c. No layout at all
 
 Directories without an `index` and without a same-name file are pure
-organisational namespaces that contribute their segment(s) to the URL:
+organisational namespaces that contribute their path segment(s) to the URL:
 
 ```txt
 src/pages/docs/
 └── [slug].tsx     # /docs/:slug, no layout wrapper
 ```
 
-This also covers using a group purely for organisation:
+A group used purely for organisation belongs to the same category:
 
 ```txt
 src/pages/(admin)/
 └── dashboard.tsx  # /dashboard — (admin) contributes no segment and no layout
 ```
 
-## 5. Dynamic segments and catch-alls
+### 4d. Layout special file (`layoutFile` option, opt-in)
+
+With `layoutFile: 'layout'` enabled, a `layout.tsx` in every directory becomes
+that path segment’s layout component — an alternative to 4a’s “same-name file”
+(their simultaneous presence is an error):
+
+```ts
+// vite.config.ts
+reactRouter({
+  layoutFile: 'layout',
+})
+```
+
+```txt
+src/pages/
+├── layout.tsx        # root layout (pathless wrapper): wraps everything below (incl. /)
+├── blog/
+│   ├── layout.tsx    # layout of the blog segment (no blog.tsx needed)
+│   ├── index.tsx     # /blog
+│   └── [slug].tsx    # /blog/:slug
+└── about.tsx         # /about (rendered in the root layout.tsx <Outlet/>)
+```
+
+Rules:
+
+- A root-level `layout.tsx` generates a **pathless top-level route**; every
+  other route (including the `/` index route) renders as its child (needs an
+  `<Outlet/>`);
+- while enabled, `layout` is a reserved name: no plain static `/layout` page is
+  possible; to use that file name as a page, turn the option off or use a route
+  group;
+- consistent with 4a semantics, a `(group)/index.tsx` pathless layout can still
+  be used alongside a path-segment `layout.tsx`.
+
+## 5. Dynamic segments, optional params, catch-alls and dot-nesting
+
+### 5a. Dynamic segments and catch-alls
 
 ```txt
 src/pages/
@@ -185,8 +240,6 @@ src/pages/
 │   └── [sku].tsx          # /products/:sku
 ├── catalog/
 │   └── [...rest].tsx      # /catalog/*  (any remaining path)
-├── users/
-│   └── [id].edit.tsx      # ⚠️ ERROR — partial segment
 └── [...rest].tsx          # /*          top-level 404 catch-all
 ```
 
@@ -206,30 +259,94 @@ Catch-all notes:
 
 - The generated path is `'*'`; the matched remainder is `params['*']`
   (React Router semantics), **not** `params.rest`.
-- A splat file cannot contain children and cannot be a directory.
-- Among sibling records the splat is always emitted **last** (React Router
+- A catch-all file cannot contain children and cannot be a directory.
+- Among sibling records the catch-all is always emitted **last** (React Router
   ranks it lowest anyway; we keep the output deterministic).
+
+### 5b. Dot-nesting (`dotNesting: true`, opt-in)
+
+When enabled, dots in file names expand into **nested static path segments**
+(no UI nesting and no layout is created):
+
+```ts
+reactRouter({ dotNesting: true })
+```
+
+```txt
+src/pages/
+├── settings.profile.tsx     # /settings/profile —— one leaf route, no middle layout
+└── admin.users.index.tsx    # /admin/users —— the last segment is an index
+```
+
+Rules:
+
+- Both sides of a dot must be **non-empty static names** (plain Unicode
+  characters are fine beyond `[A-Za-z0-9_-]`, but `:` `*` `?` `[` `]` `(` `)`
+  are not allowed);
+- params/catch-alls/groups must stay whole segments: write `users/[id].tsx`,
+  not `users.[id].tsx`;
+- conflicts with a same-path directory/same-name file follow the existing
+  rules (Duplicate layout, etc.);
+- with the option off, dots are literal characters: `a.b.tsx` → `/a.b`
+  (v0.1 behaviour).
+
+### 5c. Optional parameters `[[x]]` (file level)
+
+`[[lang]].tsx` (or `[[...rest]].tsx`) means this path segment is **optional**:
+the plugin automatically splits it into two routes that both lazy-load the
+same module:
+
+```txt
+src/pages/docs/
+└── [[lang]].tsx
+```
+
+This is equivalent to:
+
+```js
+{
+  path: 'docs',
+  children: [
+    { index: true, lazy: /* docs/[[lang]].tsx — /docs */ },
+    { path: ':lang', lazy: /* docs/[[lang]].tsx — /docs/:lang */ },
+  ],
+}
+```
+
+Rules:
+
+- **Files only**: `[[lang]]` as a directory name is an error;
+- when the directory already has an `index.tsx`, a `[[lang]].tsx` cannot be
+  added (the no-param URL is already taken by the index) → Duplicate index
+  error;
+- `[[x]]` next to `[x]` (same directory) is a conflicting error;
+- an optional file’s `export const route` may only carry `handle` (`path`/
+  `caseSensitive` are ambiguous there and are rejected, see
+  [Route modules](route-modules.md)).
 
 ## 6. Route groups `(name)`
 
 - A group contributes **no path segment**.
 - With `(name)/index.tsx` the group is a pathless **layout** (4b).
 - Without an index the group is transparent: its children are collected under a
-  component-less pathless record (renders through, see §3 note).
+  component-less pathless record (renders through, see the §3 note).
 - A group inside a group, and groups mixed with regular directories, work
   recursively.
 
 ```txt
 src/pages/
 ├── (auth)/
-│   ├── layout.tsx?  # ✗ not special — groups have no layout file convention;
-│   │                #   use (auth)/index.tsx for the layout component
+│   ├── layout.tsx?  # ✗ not special by default — (auth)/index.tsx is the group layout
 │   └── login.tsx    # /login
 └── (docs)/
     ├── index.tsx    # pathless layout for /guides, /reference
     ├── guides.tsx   # /guides
     └── reference.tsx# /reference
 ```
+
+> With `layoutFile` enabled, `(name)/layout.tsx` can also act as the group
+> layout, but it cannot coexist with `(name)/index.tsx` (both would claim the
+> group’s pathless layout).
 
 ## 7. Multiple routes folders and prefixes
 
@@ -258,10 +375,15 @@ Rules:
   component-less prefix records — children render through (no layout).
 - Folders are scanned in order into one tree. Identical routes across folders
   produce a duplicate-file error (see Errors); use distinct prefixes.
-- Per-folder `extensions` / `exclude` override the global ones (functions can
-  extend the global value instead of replacing it).
+- Per-folder `extensions` / `exclude` / `filePatterns` override the global
+  ones (functions can extend the global value instead of replacing it).
 - `exclude` globs are **relative to each folder's `src`** (picomatch syntax),
   e.g. `['**/ignored/**']`.
+- `filePatterns` (optional) is a **positive** filter: when given, only files
+  matching any of its globs are treated as page files (matched against the
+  relative path, including the extension). E.g.
+  `{ src: 'src/pages', filePatterns: ['**/*.page.tsx'] }` only treats
+  `.page.tsx` files as pages. An empty array is an error (nothing would match).
 
 ## 8. Custom extensions
 
@@ -284,7 +406,9 @@ Notes:
 Generated records are sorted deterministically:
 
 - siblings by raw name (string order),
-- the splat always last.
+- the catch-all always last,
+- records promoted to the top level by an absolute `path` override are sorted
+  by their path string.
 
 The same page file set always yields byte-identical output (verified by a unit
 test), which keeps snapshots and diffs stable.
@@ -297,32 +421,19 @@ test), which keeps snapshots and diffs stable.
 | `users.vue` + `users/` nesting | `users.tsx` + `users/` → layout | layout needs `<Outlet/>` |
 | `[id].vue` | `[id].tsx` | same |
 | `[...path].vue` → `/:path(.*)` | `[...rest].tsx` → `'*'` | param name differs (`'*'`) |
-| `[[id]].vue`, `[id]+.vue` | ❌ rejected | React Router cannot express them |
-| `prefix-[id].vue` (partial) | ❌ rejected | params occupy whole segments |
-| `(group)/` directories | `(group)/` directories | group `index` here means layout, not default content |
-| `users.create.vue` dot-nesting | dot kept literally | no implicit `/` splitting (v0.1) |
-| named views `index@aux.vue` | ❌ rejected | no Vue named views in React Router |
-| `<route>` block / `definePage` | module named exports | see [Route modules](route-modules.md) |
-| route **names** + typed router | no names | React Router has no named routes |
+| `[[id]].vue` (optional) | `[[id]].tsx` → split into an index + a `:id` record | React Router has no optional-segment syntax; expressed via the split |
+| `[id]+.vue` (repeatable) | ❌ not supported | React Router cannot express it |
+| `prefix-[id].vue` (partial) | ❌ not supported | params must occupy a whole segment |
+| `(group)/` directories | `(group)/` directories | a group `index` here means layout, not default content |
+| `users.create.vue` (dot-nesting, Nuxt style) | dots kept literally by default; with `dotNesting: true` they expand to `/users/create` | React Router has no path-level components, so only UI-less expansion is possible |
+| named views `index@aux.vue` | ❌ not supported | no Vue named views in React Router |
+| `<route>` block / `definePage` | module named exports + `export const route` overrides | see [Route modules](route-modules.md) |
+| route **names** + typed router | no names; a `AppRoutePath`/`RouteParams` type surface instead | React Router has no named routes |
 
 ## 11. Playground example
 
-The repository playground (`playground/src/pages`) exercises every rule above —
-index, param, splat, group layout, organisation-only group, same-name layout —
-and is the reference for how each convention is meant to be used:
-
-```txt
-playground/src/pages/
-├── index.tsx
-├── about.tsx
-├── users/index.tsx
-├── users/[id].tsx
-├── blog.tsx
-├── blog/index.tsx
-├── blog/[slug].tsx
-├── (shop)/index.tsx
-├── (shop)/cart.tsx
-├── (shop)/checkout.tsx
-├── (admin)/dashboard.tsx
-└── [...rest].tsx
-```
+The repository playground (`playground/src/pages`) exercises the conventions —
+index, param, catch-all, group layout, organisation-only group, same-name
+layout — and the unit tests / SSR end-to-end fixtures (`tests/fixtures/`)
+additionally cover optional params (`[[chapter]]`), `path` overrides, a root
+`layout.tsx` and dot-nested pages: they are the freshest runnable references.

@@ -2,6 +2,10 @@ import type { Plugin, ViteDevServer } from 'vite'
 import { resolveOptions, type Options } from './options'
 import { createRoutesContext } from './core/context'
 import {
+  attachPageWatcher,
+  createPollingScanner,
+} from './core/watch'
+import {
   MODULE_ROUTES_PATH,
   asVirtualId,
   getVirtualId,
@@ -18,10 +22,18 @@ import {
  *   plugins: [reactRouter()],
  * })
  * ```
+ *
+ * Structural changes (adding/removing/renaming page files) are detected
+ * through the dev-server file watcher (see `Options.watch` for the polling
+ * fallback). The virtual routes module is invalidated and the page reloaded
+ * so `createBrowserRouter(routes)` re-runs with the fresh table.
  */
 export default function reactRouter(options: Options = {}): Plugin {
   const resolved = resolveOptions(options)
   const ctx = createRoutesContext(resolved)
+  const logger = resolved.logs
+    ? (message: string) => console.log('[unplugin-react-router]', message)
+    : undefined
 
   return {
     name: 'unplugin-react-router',
@@ -37,10 +49,6 @@ export default function reactRouter(options: Options = {}): Plugin {
 
     async buildStart() {
       await ctx.scanPages()
-    },
-
-    buildEnd() {
-      ctx.stopWatcher()
     },
 
     load(id: string) {
@@ -65,13 +73,43 @@ export default function reactRouter(options: Options = {}): Plugin {
         },
       })
 
-      // start polling for added/removed page files (dev only)
-      ctx.startWatcher()
-      const closeWatcher = () => {
-        ctx.stopWatcher()
+      const mode = resolved.watch
+      if (mode === false) {
+        // never watch: structural page changes need a dev-server restart
+        return
       }
-      server.httpServer?.once('close', closeWatcher)
-      return closeWatcher
+
+      const onChanged = () => ctx.scanPages()
+      let detachWatcher: (() => void) | undefined
+      let stopPolling: (() => void) | undefined
+
+      if (mode === 'polling' || !server.watcher) {
+        // forced polling, or no bundler watcher to tap
+        const scanner = createPollingScanner({
+          folders: resolved.routesFolder,
+          onChanged,
+          logger,
+        })
+        stopPolling = scanner.close
+      } else {
+        // primary path: bundler watcher add/unlink events
+        const attached = attachPageWatcher({
+          watcher: server.watcher,
+          folders: resolved.routesFolder,
+          onChanged,
+          logger,
+        })
+        detachWatcher = attached.detach
+      }
+
+      const closeWatchers = () => {
+        detachWatcher?.()
+        detachWatcher = undefined
+        stopPolling?.()
+        stopPolling = undefined
+      }
+      server.httpServer?.once('close', closeWatchers)
+      return closeWatchers
     },
   }
 }

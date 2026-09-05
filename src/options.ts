@@ -29,6 +29,19 @@ export interface RoutesFolderOption {
    * to this folder's `src`.
    */
   exclude?: string[] | ((existing: string[]) => string[])
+
+  /**
+   * Positive glob filter (picomatch, relative to this folder's `src`).
+   * When provided, only files matching **one** of these patterns are
+   * considered page files (extension + `exclude` still apply). Patterns match
+   * the whole relative path including the extension, e.g.
+   * `['**\/*.page.tsx', '**\/*.route.tsx']`.
+   *
+   * An empty array means *no file matches* — do not pass `[]` unless you
+   * really want this folder to produce no routes.
+   * @default `undefined` (no restriction)
+   */
+  filePatterns?: string[] | ((existing: string[]) => string[])
 }
 
 export type RoutesFolder =
@@ -56,6 +69,34 @@ export interface Options {
   exclude?: string[]
 
   /**
+   * Optional special file name (without extension, e.g. `'layout'`) used as
+   * the layout component of every folder that contains a file with that name
+   * (`layout.tsx`). Off by default — without it, layouts are declared with
+   * the *same-name* convention (`blog.tsx` next to `blog/`).
+   *
+   * When enabled:
+   * - `layout.tsx` inside a folder becomes that path segment's layout
+   *   (it is **not** a page),
+   * - a `layout.tsx` at the routes folder root becomes a pathless wrapper
+   *   layout around every route,
+   * - the name is reserved: you cannot have a static `/layout` page while
+   *   this option is on (rename it or use a route group).
+   * @default `false`
+   */
+  layoutFile?: string | false
+
+  /**
+   * Expand dots in file names into nested static path segments without UI
+   * nesting: `users.create.tsx` → `/users/create` (and `users.create.index.tsx`
+   * → `/users/create`). Off by default, where a dot is a literal character
+   * (`a.b.tsx` → `/a.b`). Only plain static names (`[A-Za-z0-9_-]+`) can be
+   * joined by dots; `[param]`, `[...splat]` or `(group)` segments must stay
+   * whole segments on disk.
+   * @default `false`
+   */
+  dotNesting?: boolean
+
+  /**
    * Root of the project. All paths are resolved relative to this one.
    * @default `process.cwd()`
    */
@@ -63,8 +104,9 @@ export interface Options {
 
   /**
    * Generate a `.d.ts` file declaring the `unplugin-react-router/routes`
-   * module so TypeScript can type-check it. Defaults to `true` when
-   * `typescript` is installed. Can be set to a string filepath.
+   * module (routes type, `AppRoutePath`, `RouteParams`…) so TypeScript can
+   * type-check it. Defaults to `true` when `typescript` is installed. Can be
+   * set to a string filepath.
    * @default `true`
    */
   dts?: boolean | string
@@ -75,10 +117,16 @@ export interface Options {
   logs?: boolean
 
   /**
-   * Whether to watch the routes folders for changes (dev server only).
+   * How to detect page file additions/removals during development:
+   *
+   * - `true` (default): attach to the bundler/dev-server file watcher when
+   *   available, fall back to polling otherwise,
+   * - `'polling'`: force the polling scanner (used when the bundler watcher
+   *   events cannot be reliably tapped, e.g. some Vite 8 / Rolldown setups),
+   * - `false`: never watch (page changes require a dev-server restart).
    * @default `!process.env.CI`
    */
-  watch?: boolean
+  watch?: boolean | 'polling'
 
   /**
    * Allows inspection by vite-plugin-inspect by not adding the leading `\0`
@@ -97,6 +145,8 @@ export const DEFAULT_OPTIONS = {
   logs: false,
   _inspect: false,
   watch: !process.env.CI,
+  layoutFile: false,
+  dotNesting: false,
 } satisfies Options
 
 export interface RoutesFolderOptionResolved {
@@ -106,6 +156,8 @@ export interface RoutesFolderOptionResolved {
   path: string
   extensions: string[]
   exclude: string[]
+  /** Positive glob filter (relative paths incl. extension) or `null`. */
+  filePatterns: string[] | null
 }
 
 function normalizeExtensions(
@@ -130,6 +182,19 @@ function normalizeExtensions(
   return [...new Set(result)].sort((a, b) => b.length - a.length)
 }
 
+function normalizeFilePatterns(
+  filePatterns: string[] | null | undefined
+): string[] | null {
+  if (filePatterns === undefined || filePatterns === null) return null
+  if (filePatterns.length === 0) {
+    throw new Error(
+      '[unplugin-react-router] "filePatterns" cannot be an empty array: no file ' +
+        'would match. Remove the option (or the folder) instead.'
+    )
+  }
+  return [...new Set(filePatterns)]
+}
+
 export function isArray(value: unknown): value is unknown[] {
   return Array.isArray(value)
 }
@@ -146,9 +211,13 @@ export function resolveOverridable<T>(
 export interface ResolvedOptions {
   root: string
   routesFolder: RoutesFolderOptionResolved[]
+  /** Special layout file name (without extension) or `null` when disabled. */
+  layoutFileName: string | null
+  /** Expand dots in file names into nested static segments. */
+  dotNesting: boolean
   dts: string | false
   logs: boolean
-  watch: boolean
+  watch: boolean | 'polling'
   _inspect: boolean
 }
 
@@ -191,11 +260,22 @@ export function resolveOptions(options: Options = {}): ResolvedOptions {
         | ((existing: string[]) => string[])
         | undefined
     )
+    let perFolderPatterns: string[] | null = null
+    if (option.filePatterns !== undefined) {
+      perFolderPatterns = resolveOverridable(
+        [] as string[],
+        option.filePatterns as
+          | string[]
+          | ((existing: string[]) => string[])
+          | undefined
+      )
+    }
     return {
       src: nodeResolve(root, option.src),
       path: prefix.replace(/\/+$/, ''),
       extensions: normalizeExtensions(perFolderExtensions, globalExtensions),
       exclude: perFolderExclude,
+      filePatterns: normalizeFilePatterns(perFolderPatterns),
     }
   })
 
@@ -214,9 +294,25 @@ export function resolveOptions(options: Options = {}): ResolvedOptions {
     dts = false
   }
 
+  const layoutFile =
+    typeof options.layoutFile === 'string' && options.layoutFile.trim() !== ''
+      ? options.layoutFile.trim()
+      : null
+  if (
+    layoutFile !== null &&
+    !/^[\w-]+$/.test(layoutFile)
+  ) {
+    throw new Error(
+      `[unplugin-react-router] "layoutFile" must be a plain file name without ` +
+        `extension ("${options.layoutFile}"). Use e.g. layoutFile: 'layout'.`
+    )
+  }
+
   return {
     root,
     routesFolder,
+    layoutFileName: layoutFile,
+    dotNesting: options.dotNesting ?? DEFAULT_OPTIONS.dotNesting,
     dts,
     logs: options.logs ?? DEFAULT_OPTIONS.logs,
     watch: options.watch ?? DEFAULT_OPTIONS.watch,

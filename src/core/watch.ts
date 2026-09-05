@@ -28,7 +28,14 @@ export function findFolder(
 
 export interface FolderMatcher {
   folder: RoutesFolderOptionResolved
+  /** Whether the file name (basename with extension) matches one extension. */
   matchesExtension: (fileName: string) => boolean
+  /**
+   * Whether the file (relative POSIX path from the folder root, including its
+   * extension) is a candidate page file: extension match AND positive
+   * `filePatterns` match (when configured) AND not excluded.
+   */
+  matchesFile: (rel: string) => boolean
   isExcluded: (relFromFolder: string) => boolean
 }
 
@@ -38,10 +45,17 @@ export function createFolderMatcher(
 ): FolderMatcher {
   const exts = folder.extensions
   const excluded = picomatch(folder.exclude)
+  const patterns = folder.filePatterns ? picomatch(folder.filePatterns) : null
   return {
     folder,
     matchesExtension: (fileName: string) =>
       exts.some((ext) => fileName.endsWith(ext)),
+    matchesFile: (rel: string) => {
+      const fileName = rel.slice(rel.lastIndexOf('/') + 1)
+      if (!exts.some((ext) => fileName.endsWith(ext))) return false
+      if (patterns && !patterns(rel)) return false
+      return !excluded(rel)
+    },
     isExcluded: (rel: string) => excluded(rel),
   }
 }
@@ -63,8 +77,8 @@ export function stripExtension(
 }
 
 /**
- * True when `abs` is a page file (matching extension, not excluded) of one of
- * the watched folders.
+ * True when `abs` is a page file (matching extension + filePatterns, not
+ * excluded) of one of the watched folders.
  */
 export function isPageFile(
   folders: RoutesFolderOptionResolved[],
@@ -73,9 +87,7 @@ export function isPageFile(
   const folder = findFolder(folders, abs)
   if (!folder) return false
   const rel = relToFolder(folder, abs)
-  const fileName = abs.slice(abs.lastIndexOf(sep) + 1)
-  const matcher = createFolderMatcher(folder)
-  return matcher.matchesExtension(fileName) && !matcher.isExcluded(rel)
+  return createFolderMatcher(folder).matchesFile(rel)
 }
 
 /** Minimal event-emitter interface of the file watchers we attach to. */
@@ -134,6 +146,7 @@ export function attachPageWatcher(options: {
 async function collectPageRels(
   folder: RoutesFolderOptionResolved
 ): Promise<string[]> {
+  const matcher = createFolderMatcher(folder)
   const rels: string[] = []
   const walk = async (dir: string): Promise<void> => {
     const dirents = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
@@ -142,10 +155,9 @@ async function collectPageRels(
       const full = dir + sep + d.name
       if (d.isDirectory()) {
         await walk(full)
-      } else if (d.isFile() && stripExtension(folder, d.name) !== null) {
+      } else if (d.isFile()) {
         const rel = relToFolder(folder, full)
-        const matcher = createFolderMatcher(folder)
-        if (!matcher.isExcluded(rel)) rels.push(rel)
+        if (matcher.matchesFile(rel)) rels.push(rel)
       }
     }
   }
@@ -156,8 +168,11 @@ async function collectPageRels(
 /**
  * Dev-only fallback that polls the routes folders for added/removed page
  * files, so route structure changes are detected even when the bundler
- * watcher cannot be reliably tapped. Page folders are usually small, so a
- * short interval is cheap.
+ * watcher cannot be reliably tapped (e.g. some Vite 8 / Rolldown setups).
+ * Page folders are usually small, so a short interval is cheap.
+ *
+ * Enable with `watch: 'polling'`; it is also used automatically when no
+ * bundler watcher is available.
  */
 export function createPollingScanner(options: {
   folders: RoutesFolderOptionResolved[]

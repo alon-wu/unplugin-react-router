@@ -1,4 +1,5 @@
 import type { TreeNode } from '../core/tree'
+import { hasAbsolutePath } from '../core/routeConfig'
 import { stringify, toPosix } from '../utils'
 
 /**
@@ -7,6 +8,12 @@ import { stringify, toPosix } from '../utils'
  * forwarded to the route (`Component` explicitly from `default`, everything
  * else spread), which is robust whether React Router maps module `default`
  * exports itself or not.
+ *
+ * A leaf whose route config declares an **absolute** `path` (starting with
+ * `/`) cannot be a nested child of its on-disk folder (React Router forbids
+ * absolute child paths that do not match the parent chain), so it is promoted
+ * to a top-level route; its on-disk ancestors produce no route when they
+ * become empty.
  */
 
 function indentBlock(block: string, prefix: string): string {
@@ -52,14 +59,61 @@ function lazyField(file: string): [string, string] {
   return ['lazy', genLazy(file)]
 }
 
+/** Extra fields coming from the file's `route` config, when present. */
+function configFields(config: { caseSensitive?: boolean; handle?: unknown } | undefined): Array<[string, string]> {
+  if (!config) return []
+  const fields: Array<[string, string]> = []
+  if (config.caseSensitive) fields.push(['caseSensitive', 'true'])
+  if (config.handle !== undefined) {
+    fields.push(['handle', JSON.stringify(config.handle)])
+  }
+  return fields
+}
+
+function configFieldsOf(node: TreeNode, via: 'index' | 'file'): Array<[string, string]> {
+  return configFields(via === 'index' ? node.indexConfig : node.fileConfig)
+}
+
+/** The `path` value of a record: config override wins over the segment. */
+function pathValue(node: TreeNode): string {
+  if (node.fileConfig?.path !== undefined) return node.fileConfig.path
+  return node.pathSegment
+}
+
 function pathField(node: TreeNode): [string, string] {
-  return ['path', stringify(node.pathSegment)]
+  return ['path', stringify(pathValue(node))]
+}
+
+/** True for a leaf promoted to a top-level route by its absolute path override. */
+function isPromotedLeaf(node: TreeNode): boolean {
+  return (
+    node.kind !== 'group' &&
+    node.file !== null &&
+    node.children.size === 0 &&
+    hasAbsolutePath(node.fileConfig)
+  )
+}
+
+/** Collect every promoted (absolute override) leaf, sorted deterministically. */
+function collectPromoted(root: TreeNode): TreeNode[] {
+  const out: TreeNode[] = []
+  const walk = (node: TreeNode): void => {
+    if (isPromotedLeaf(node)) out.push(node)
+    for (const child of node.children.values()) walk(child)
+  }
+  for (const child of root.children.values()) walk(child)
+  return out.sort((a, b) => {
+    const ap = a.fileConfig!.path!
+    const bp = b.fileConfig!.path!
+    return ap < bp ? -1 : ap > bp ? 1 : 0
+  })
 }
 
 /**
  * Records of the route *segments* directly under `parent` (its `children`),
- * e.g. `about`, `users/`, `(admin)/`. Sorted deterministically with the
- * splat last.
+ * e.g. `about`, `users/`, `(admin)/`. Promoted (absolute-override) leaves are
+ * excluded — they are rendered at the top level. Sorted deterministically
+ * with the splat last.
  */
 function genChildRecords(parent: TreeNode, indent: number): string[] {
   const children = [...parent.children.values()].sort((a, b) => {
@@ -73,44 +127,71 @@ function genChildRecords(parent: TreeNode, indent: number): string[] {
 
 /**
  * Generate a single route object literal for one tree node. Returns `null`
- * when the node should not produce a route (empty directory).
+ * when the node should not produce a route (empty directory or a promoted
+ * leaf).
  */
 export function genNodeRecord(node: TreeNode, indent: number): string | null {
+  // Promoted leaves are emitted at the top level by generateRouteRecords.
+  if (isPromotedLeaf(node)) return null
+
   if (node.kind === 'group') {
-    // pathless: either a layout (with index component) or a transparent
-    // grouping node without component
+    // pathless: either a layout (layout file or index component) or a
+    // transparent grouping node without component
     const children = genChildRecords(node, indent + 2)
-    if (children.length === 0 && !node.indexFile) return null
+    if (children.length === 0 && !node.indexFile && !node.file) return null
     const fields: Array<[string, string]> = []
-    if (node.indexFile) fields.push(lazyField(node.indexFile))
+    if (node.file) {
+      fields.push(...configFields(node.fileConfig))
+      fields.push(lazyField(node.file))
+    } else if (node.indexFile) {
+      fields.push(...configFieldsOf(node, 'index'))
+      fields.push(lazyField(node.indexFile))
+    }
     return genObject(fields, children, indent)
   }
 
   if (node.kind === 'splat') {
     // splat files are always leaves (enforced by the tree)
     if (!node.file) return null
-    return genObject([pathField(node), lazyField(node.file)], null, indent)
+    const fields: Array<[string, string]> = [pathField(node)]
+    fields.push(...configFields(node.fileConfig))
+    fields.push(lazyField(node.file))
+    return genObject(fields, null, indent)
   }
 
-  const isDirectory = node.children.size > 0
+  // A node is a "directory record" when it has children OR an index child —
+  // note an index route makes the node a directory even with zero segment
+  // children (e.g. `blog.tsx` + `blog/index.tsx`).
+  const isDirectory = node.children.size > 0 || node.indexFile !== null
 
   if (!isDirectory) {
     // a plain page file
     if (!node.file) return null
-    return genObject([pathField(node), lazyField(node.file)], null, indent)
+    const fields: Array<[string, string]> = [pathField(node)]
+    fields.push(...configFields(node.fileConfig))
+    fields.push(lazyField(node.file))
+    return genObject(fields, null, indent)
   }
+
+  const childRecords = genChildRecords(node, indent + 2)
+  // When every child was promoted and there is no index/layout either, the
+  // node produces no route (its on-disk path would otherwise be empty).
+  if (!node.file && !node.indexFile && childRecords.length === 0) return null
 
   // directory: { path, layout?, children: [<index>?, ...records] }
   const fields: Array<[string, string]> = []
   fields.push(pathField(node))
-  if (node.file) fields.push(lazyField(node.file))
+  if (node.file) {
+    fields.push(...configFields(node.fileConfig))
+    fields.push(lazyField(node.file))
+  }
 
-  const childRecords = genChildRecords(node, indent + 2)
   const records: string[] = []
   if (node.indexFile) {
-    records.push(
-      genObject([['index', 'true'], lazyField(node.indexFile)], null, indent + 2)
-    )
+    const indexFields: Array<[string, string]> = [['index', 'true']]
+    indexFields.push(...configFieldsOf(node, 'index'))
+    indexFields.push(lazyField(node.indexFile))
+    records.push(genObject(indexFields, null, indent + 2))
   }
   records.push(...childRecords)
   return genObject(fields, records, indent)
@@ -118,17 +199,44 @@ export function genNodeRecord(node: TreeNode, indent: number): string | null {
 
 /**
  * Route records for the whole tree root. The root's own `index` file becomes
- * a top-level `{ index: true }` route (matching `/`).
+ * a top-level `{ index: true }` route (matching `/`); a root layout file
+ * (layout.tsx with `layoutFile` enabled) becomes a pathless wrapper around
+ * every route; leaves with an absolute `path` override are promoted to
+ * top-level routes (inside the wrapper when there is one).
  */
 export function genTopLevelRecords(root: TreeNode, indent: number): string[] {
   const records: string[] = []
+  let indexRecord: string | null = null
   if (root.indexFile) {
-    records.push(
-      genObject([['index', 'true'], lazyField(root.indexFile)], null, indent)
-    )
+    const fields: Array<[string, string]> = [['index', 'true']]
+    fields.push(...configFieldsOf(root, 'index'))
+    fields.push(lazyField(root.indexFile))
+    indexRecord = genObject(fields, null, indent + 2)
   }
   const childRecords = genChildRecords(root, indent)
-  records.push(...childRecords)
+  const promoted = collectPromoted(root).map((node) => {
+    const fields: Array<[string, string]> = [pathField(node)]
+    fields.push(...configFields(node.fileConfig))
+    fields.push(lazyField(node.file!))
+    return genObject(fields, null, indent + 2)
+  })
+
+  if (root.file) {
+    // pathless root wrapper (root layout.tsx): every route — including the
+    // root index and promoted absolute routes — renders inside its <Outlet/>.
+    const inner: string[] = []
+    if (indexRecord) inner.push(indexRecord)
+    inner.push(...childRecords)
+    inner.push(...promoted)
+    const fields: Array<[string, string]> = []
+    fields.push(...configFields(root.fileConfig))
+    fields.push(lazyField(root.file))
+    records.push(genObject(fields, inner, indent))
+  } else {
+    if (indexRecord) records.push(indexRecord)
+    records.push(...childRecords)
+    records.push(...promoted)
+  }
   return records
 }
 

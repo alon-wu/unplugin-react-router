@@ -69,3 +69,79 @@ describe('generateRouteRecords', () => {
     expect(a).toBe(b)
   })
 })
+
+describe('generateRouteRecords — v0.2 additions', () => {
+  it('emits path override, caseSensitive and static handle', () => {
+    const root = buildTree([{ dirs: ['users'], name: '[id]', file: '/p/users/[id].tsx' }])
+    root.children.get('users')!.children.get('[id]')!.fileConfig = {
+      path: '/member/:id',
+      caseSensitive: true,
+      handle: { crumb: 'Member' },
+    }
+    const code = generateRouteRecords(root)
+    expect(code).toContain(`path: "/member/:id"`)
+    expect(code).toContain(`caseSensitive: true`)
+    expect(code).toContain(`handle: {"crumb":"Member"}`)
+  })
+
+  it('renders a root layout.tsx as a pathless wrapper (layoutFile)', () => {
+    const root = buildTree([
+      { dirs: [], name: 'index', file: '/p/index.tsx' },
+      { dirs: [], name: 'about', file: '/p/about.tsx' },
+      { dirs: [], name: 'layout', file: '/p/layout.tsx' },
+    ])
+    // re-insert layout as the root layout via the tree option
+    const root2 = createRootNode()
+    for (const f of [
+      { dirs: [] as string[], name: 'layout', file: '/p/layout.tsx' },
+      { dirs: [] as string[], name: 'index', file: '/p/index.tsx' },
+      { dirs: [] as string[], name: 'about', file: '/p/about.tsx' },
+    ]) {
+      addFileToTree(root2, f.dirs, f.name, f.file, { layoutFileName: 'layout' })
+    }
+    const code = generateRouteRecords(root2)
+    void root
+    expect(code).toContain(`import("/p/layout.tsx")`)
+    // the root index route lives inside the wrapper's children (rendered in
+    // its <Outlet/>), so it must still appear as an index record
+    expect(code).toContain(`index: true`)
+    expect(code).toContain(`import("/p/index.tsx")`)
+  })
+
+  it('turns [[id]].tsx into an index record plus a :id record of the same module', () => {
+    const root = createRootNode()
+    addFileToTree(root, ['users'], '[[id]]', '/p/users/[[id]].tsx')
+    const code = generateRouteRecords(root)
+    expect(code).toContain(`path: "users"`)
+    expect(code).toContain(`index: true`)
+    expect(code).toContain(`path: ":id"`)
+    const imports =
+      code.match(/import\("\/p\/users\/\[\[id\]\]\.tsx"\)/g) ?? []
+    expect(imports.length).toBe(2)
+  })
+
+  it('nests dot-nested pages without adding a layout', () => {
+    const root = createRootNode()
+    addFileToTree(root, [], 'users.create', '/p/users.create.tsx', {
+      dotNesting: true,
+    })
+    const code = generateRouteRecords(root)
+    expect(code).toContain(`path: "users"`)
+    expect(code).toContain(`path: "create"`)
+    expect(code).toContain(`import("/p/users.create.tsx")`)
+  })
+
+  it('emits a folder layout.tsx (layoutFile) inside the directory record', () => {
+    const root = createRootNode()
+    addFileToTree(root, ['blog'], 'layout', '/p/blog/layout.tsx', {
+      layoutFileName: 'layout',
+    })
+    addFileToTree(root, ['blog'], 'index', '/p/blog/index.tsx')
+    addFileToTree(root, ['blog'], '[slug]', '/p/blog/[slug].tsx')
+    const code = generateRouteRecords(root)
+    expect(code).toContain(`path: "blog"`)
+    expect(code).toContain(`import("/p/blog/layout.tsx")`)
+    expect(code).toContain(`import("/p/blog/index.tsx")`)
+    expect(code).toContain(`import("/p/blog/[slug].tsx")`)
+  })
+})

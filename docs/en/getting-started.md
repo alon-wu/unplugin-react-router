@@ -9,7 +9,7 @@
 | `react-router` | `^8.0.0` (peer) | Data mode SPA. Everything maps onto `RouteObject`. |
 | `vite` | `^5 || ^6 || ^7 || ^8` (optional peer) | Only needed when using the `./vite` entry. |
 | `react` / `react-dom` | `^19` (typical) | Any version compatible with React Router v8. |
-| Node.js | ≥ 20 (CI/dev tested on 24) | ESM-only, uses modern `node:` APIs. |
+| Node.js | ≥ 20.19 (engines; CI/dev tested on 24) | ESM-only, uses modern `node:` APIs. |
 
 TypeScript is optional but recommended — the generated `.d.ts` is only written
 when a `typescript` install can be detected (or `dts: true` is passed).
@@ -51,8 +51,10 @@ export default defineConfig({
 The package exposes two entries:
 
 - `unplugin-react-router/vite` — a **native Vite plugin** (recommended). It
-  wires up the virtual module **and** the dev-server pieces (polling for added
-  and removed page files, module invalidation, full reload).
+  wires up the virtual module **and** the dev-server pieces (a dev-server
+  watcher listening for added/removed page files with a polling fallback when
+  needed — tunable via the `watch` option — plus module invalidation and full
+  reload).
 - `unplugin-react-router` — a generic `unplugin` factory that works with
   rollup/rolldown/… builds. Useful when you build through another bundler; it
   does not provide dev-server watching.
@@ -116,6 +118,30 @@ Make sure TypeScript sees it. The two common shapes of `tsconfig.json`:
 > declaration is what gives you editor completion and type-checking.
 
 If you do not use TypeScript, disable generation with `dts: false`.
+
+### The generated typed route surface (v0.2)
+
+Besides declaring the virtual module, `typed-routes.d.ts` derives and exports a
+route type surface from your page tree (pure types, no runtime cost):
+
+```ts
+import type { AppRoutePath, RouteParams, RouteConfig, LoaderData } from 'unplugin-react-router/routes'
+```
+
+- `AppRoutePath` — a literal union of every reachable URL
+  (`'/' | '/about' | '/users/:id' | …`), handy for scenarios that need to
+  enumerate routes;
+- `RouteParams<'/users/:id'>` — the per-route param shape; feed it to
+  `useParams`:
+
+```tsx
+// src/pages/users/[id].tsx
+const { id } = useParams<RouteParams<'/users/:id'>>() // id: string
+```
+
+- `RouteConfig` / `LoaderData<T>` — respectively the annotation type for
+  `export const route` and a convenience alias for a loader's return type (see
+  [Route modules → Typed route surface](route-modules.md)).
 
 ## Write your first pages
 
