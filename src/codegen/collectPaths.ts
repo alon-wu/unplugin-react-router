@@ -1,5 +1,5 @@
-import type { TreeNode } from '../core/tree'
-import { hasAbsolutePath, paramKeysOfPath } from '../core/routeConfig'
+import type { TreeNode } from '../core/tree.ts'
+import { hasAbsolutePath, paramKeysOfPath } from '../core/routeConfig.ts'
 
 /**
  * Flat view of every URL the generated tree can match, used to produce the

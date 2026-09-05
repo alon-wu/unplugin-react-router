@@ -1,6 +1,6 @@
-import type { TreeNode } from '../core/tree'
-import { hasAbsolutePath } from '../core/routeConfig'
-import { stringify, toPosix } from '../utils'
+import type { TreeNode } from '../core/tree.ts'
+import { hasAbsolutePath } from '../core/routeConfig.ts'
+import { stringify, toPosix } from '../utils/index.ts'
 
 /**
  * Generate the code of the virtual routes module: an array of React Router

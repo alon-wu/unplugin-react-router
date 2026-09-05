@@ -1,5 +1,5 @@
-import type { TreeNode } from '../core/tree'
-import { collectRoutes } from './collectPaths'
+import type { TreeNode } from '../core/tree.ts'
+import { collectRoutes } from './collectPaths.ts'
 
 /**
  * Content of the generated `.d.ts` file that makes TypeScript understand the

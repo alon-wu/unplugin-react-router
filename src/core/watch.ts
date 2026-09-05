@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { isAbsolute, sep } from 'node:path'
 import picomatch from 'picomatch'
-import type { RoutesFolderOptionResolved } from '../options'
+import type { RoutesFolderOptionResolved } from '../options.ts'
 
 /** Path of a file relative to its folder in POSIX form. */
 export function relToFolder(

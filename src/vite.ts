@@ -1,6 +1,6 @@
-export { default } from './vitePlugin'
+export { default } from './vitePlugin.ts'
 export type {
   Options,
   RoutesFolder,
   RoutesFolderOption,
-} from './options'
+} from './options.ts'

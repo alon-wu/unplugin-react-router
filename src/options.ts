@@ -1,5 +1,5 @@
 import { isAbsolute, resolve as nodeResolve } from 'node:path'
-import { isPackageExists } from './utils/packageCheck'
+import { isPackageExists } from './utils/packageCheck.ts'
 
 /**
  * Options for a single routes folder, mirroring `unplugin-vue-router`'s

@@ -18,7 +18,7 @@
  *   (`layout.tsx`) inside a folder becomes that folder's layout component.
  */
 
-import type { PageRouteConfig } from './routeConfig'
+import type { PageRouteConfig } from './routeConfig.ts'
 
 export type SegmentKind = 'group' | 'static' | 'param' | 'splat'
 

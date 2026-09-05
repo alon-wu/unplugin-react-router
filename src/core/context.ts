@@ -1,17 +1,17 @@
 import { promises as fs } from 'node:fs'
 import { dirname, sep } from 'node:path'
-import type { ResolvedOptions } from '../options'
+import type { ResolvedOptions } from '../options.ts'
 import {
   addFileToTree,
   createRootNode,
   printTree,
   validateTreeConfig,
   type TreeNode,
-} from './tree'
-import { generateRouteRecords } from '../codegen/generateRouteRecords'
-import { generateDTS } from '../codegen/generateDTS'
-import { extractRouteConfig, type PageRouteConfig } from './routeConfig'
-import { createFolderMatcher, relToFolder, stripExtension } from './watch'
+} from './tree.ts'
+import { generateRouteRecords } from '../codegen/generateRouteRecords.ts'
+import { generateDTS } from '../codegen/generateDTS.ts'
+import { extractRouteConfig, type PageRouteConfig } from './routeConfig.ts'
+import { createFolderMatcher, relToFolder, stripExtension } from './watch.ts'
 
 /** Minimal server API needed by the plugin (implemented per bundler). */
 export interface ServerContext {

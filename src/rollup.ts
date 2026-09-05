@@ -1,4 +1,4 @@
-import { default as unpluginFactory } from './index'
+import { default as unpluginFactory } from './index.ts'
 
 /**
  * Rollup adapter of the unplugin factory (rolldown compatible).
@@ -13,4 +13,4 @@ import { default as unpluginFactory } from './index'
  * ```
  */
 export default unpluginFactory.rollup
-export type { Options, RoutesFolder, RoutesFolderOption } from './options'
+export type { Options, RoutesFolder, RoutesFolderOption } from './options.ts'

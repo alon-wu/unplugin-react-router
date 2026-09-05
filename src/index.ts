@@ -1,19 +1,19 @@
 import { createUnplugin } from 'unplugin'
-import { resolveOptions, type Options } from './options'
-import { createRoutesContext } from './core/context'
+import { resolveOptions, type Options } from './options.ts'
+import { createRoutesContext } from './core/context.ts'
 import {
   MODULE_ROUTES_PATH,
   asVirtualId,
   getVirtualId,
-} from './core/moduleConstants'
+} from './core/moduleConstants.ts'
 
-export type { Options, RoutesFolder, RoutesFolderOption } from './options'
-export { DEFAULT_OPTIONS } from './options'
-export type { RoutesContext, ServerContext } from './core/context'
-export { createRoutesContext } from './core/context'
-export type { TreeNode, SegmentKind, TreeOptions } from './core/tree'
-export { MODULE_ROUTES_PATH } from './core/moduleConstants'
-export type { PageRouteConfig } from './core/routeConfig'
+export type { Options, RoutesFolder, RoutesFolderOption } from './options.ts'
+export { DEFAULT_OPTIONS } from './options.ts'
+export type { RoutesContext, ServerContext } from './core/context.ts'
+export { createRoutesContext } from './core/context.ts'
+export type { TreeNode, SegmentKind, TreeOptions } from './core/tree.ts'
+export { MODULE_ROUTES_PATH } from './core/moduleConstants.ts'
+export type { PageRouteConfig } from './core/routeConfig.ts'
 
 /**
  * Build-tool agnostic entry. The factory instance exposes per-bundler

@@ -1,15 +1,15 @@
 import type { Plugin, ViteDevServer } from 'vite'
-import { resolveOptions, type Options } from './options'
-import { createRoutesContext } from './core/context'
+import { resolveOptions, type Options } from './options.ts'
+import { createRoutesContext } from './core/context.ts'
 import {
   attachPageWatcher,
   createPollingScanner,
-} from './core/watch'
+} from './core/watch.ts'
 import {
   MODULE_ROUTES_PATH,
   asVirtualId,
   getVirtualId,
-} from './core/moduleConstants'
+} from './core/moduleConstants.ts'
 
 /**
  * Native Vite plugin for file based routing with React Router.
