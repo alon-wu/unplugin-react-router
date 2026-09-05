@@ -1,3 +1,5 @@
+> **English** · [简体中文](../zh/api.md)
+
 # API reference
 
 ## Plugin factory (Vite entry — recommended)

@@ -1,3 +1,5 @@
+> **English** · [简体中文](../zh/getting-started.md)
+
 # Getting started
 
 ## Requirements

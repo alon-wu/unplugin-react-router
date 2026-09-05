@@ -1,3 +1,5 @@
+> **English** · [简体中文](../zh/file-conventions.md)
+
 # File conventions
 
 Every page file is scanned at build/dev time and translated into React Router

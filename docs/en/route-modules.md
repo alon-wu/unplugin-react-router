@@ -1,3 +1,5 @@
+> **English** · [简体中文](../zh/route-modules.md)
+
 # Route modules
 
 A page file is a **route module**. Its exports are picked up by the generated

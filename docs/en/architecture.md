@@ -1,3 +1,5 @@
+> **English** · [简体中文](../zh/architecture.md)
+
 # Architecture
 
 This page explains how the plugin works internally, why it was designed this
