@@ -1,46 +1,44 @@
 # unplugin-react-router
 
-> File based routing for [React Router](https://reactrouter.com) v8, built in the spirit of
-> [unplugin-vue-router](https://github.com/posva/unplugin-vue-router).
-
-Add a page file to `src/pages`, get a lazy loaded route — no route table to
-maintain. Page modules are **route modules**: a `default` export is the
-component, `loader`/`action`/`handle`/`ErrorBoundary`/`HydrateFallback` named
-exports become the corresponding route properties (React Router data mode).
+> File based routing for [React Router](https://reactrouter.com) v8 — inspired by
+> [unplugin-vue-router](https://github.com/posva/unplugin-vue-router). Zero-config
+> Data Mode SPA: drop a file into `src/pages`, get a lazy-loaded typed route.
 
 ```txt
 src/pages/
-├── index.tsx               →  /            (top-level index)
-├── about.tsx               →  /about
+├── index.tsx          →  /              # home
+├── about.tsx          →  /about
 ├── users/
-│   ├── index.tsx           →  /users       (index route of the segment)
-│   └── [id].tsx            →  /users/:id
-├── blog.tsx                →  /blog        (layout: file named like its folder)
+│   ├── index.tsx      →  /users         # list page (index route)
+│   └── [id].tsx       →  /users/:id     # detail (loader + ErrorBoundary)
+├── blog.tsx           →  /blog          # layout (file named like its folder)
 └── blog/
-    ├── index.tsx           →  /blog        (default content)
-    └── [slug].tsx          →  /blog/:slug  (rendered in blog.tsx <Outlet/>)
+    ├── index.tsx      →  /blog          # default content
+    └── [slug].tsx     →  /blog/:slug    # rendered inside blog.tsx <Outlet/>
 ```
 
-## Features
+## Highlights
 
-- Zero-config, framework-free (React Router **Data mode** SPA, no Remix-style
-  framework setup, no `root.tsx`, no `@react-router/dev`)
-- Code splitting for free: every page is loaded through `route.lazy`
-- `index`, dynamic (`[id]`), splat (`[...rest]`), pathless route groups
-  (`(name)/`), same-name folder layouts (`users.tsx` + `users/`), multiple
-  routes folders with static prefixes, exclusions, custom extensions
-- Generated `typed-routes.d.ts` giving the virtual module full TS types
-- Vite-native plugin (also usable through the `unplugin` factory for
-  rollup/rolldown builds)
+- **No framework mode.** Plain React Router v8 *Data Mode* + Vite. No `root.tsx`,
+  no `@react-router/dev`, no Remix runtime — `createBrowserRouter(routes)` only.
+- **Free code splitting.** Every page module is loaded through a generated
+  `route.lazy`, so component, `loader`, `action` and error boundaries are split
+  per route.
+- **Route-module contract.** `default` export = component; named exports
+  (`loader`, `action`, `handle`, `ErrorBoundary`, `HydrateFallback`,
+  `shouldRevalidate`) become the matching route properties.
+- **unplugin-vue-router conventions** adapted to React Router: `index`,
+  `[param]`, `[...splat]`, pathless groups `(name)`, same-name folder layouts,
+  multiple routes folders with prefixes, custom extensions, excludes.
+- **Typed out of the box.** A generated `typed-routes.d.ts` types the virtual
+  `unplugin-react-router/routes` module.
 
-## Install
+## Quick start
 
 ```bash
 pnpm add -D unplugin-react-router
 pnpm add react-router@^8
 ```
-
-## Usage
 
 ```ts
 // vite.config.ts
@@ -54,7 +52,7 @@ export default defineConfig({
 ```
 
 ```tsx
-// src/main.tsx — the only manual wiring you ever need
+// src/main.tsx
 import { createRoot } from 'react-dom/client'
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
@@ -69,111 +67,37 @@ createRoot(document.getElementById('root')!).render(
 )
 ```
 
-The plugin generates `typed-routes.d.ts` (unless `dts: false`) that declares
-the virtual module for TypeScript. Make sure your `tsconfig.json` picks it up
-(any `include` that covers the project root `*.d.ts` does).
+> `.tsx`/`.jsx` files under `src/pages/` are scanned by default. The plugin also
+> writes `typed-routes.d.ts` at your project root so TypeScript understands the
+> virtual import (add it to your `tsconfig` `include` if not picked up).
 
-## Route module contract
+## Documentation
 
-A page file is a route module. Its exports map 1:1 onto a React Router route:
+| Document | What you will find |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Requirements, installation, configuration, entry point, TypeScript wiring, first page |
+| [File conventions](docs/file-conventions.md) | The full file → route mapping table, layouts, groups, dynamic/splat segments, edge cases and errors |
+| [Route modules](docs/route-modules.md) | The page-module contract, generated lazy loader, supported exports and typing guidance |
+| [API reference](docs/api.md) | `Options`, `RoutesFolderOption`, virtual module, generated files, package exports, every error message |
+| [Architecture](docs/architecture.md) | Motivation, module map, route-tree model, codegen, virtual module, dev/HMR behaviour, comparison with unplugin-vue-router, known limitations & roadmap |
+| [Testing & contributing](docs/testing.md) | Test matrix, how each suite works, dev commands, how to add coverage |
 
-```tsx
-// src/pages/users/[id].tsx
-import { useLoaderData, type LoaderFunctionArgs } from 'react-router'
+## Ecosystem context
 
-export async function loader({ params }: LoaderFunctionArgs) {
-  return { id: params.id } // loader
-}
+| Approach | Trade-offs |
+| --- | --- |
+| **This plugin** | Library/data-mode SPA, no framework, conventions close to unplugin-vue-router, typed virtual module |
+| [React Router Framework mode](https://reactrouter.com/start/framework/routing) (`@react-router/dev` + `fs-routes`) | Powerful but requires framework mode: `root.tsx`, config files, server runtime |
+| [vite-plugin-react-router-fs](https://github.com/eralvarez/vite-plugin-react-router-fs) | Community plugin writing a physical `routes.ts`; lighter, different conventions |
 
-export function ErrorBoundary() { /* ... */ }     // error boundary
-export const handle = { crumb: 'user' }           // matches/handle
-// export async function action() {...}           // mutations
+See [Architecture → Motivation](docs/architecture.md#motivation-and-design-goals) for the full comparison.
 
-export default function User() {                  // Component
-  const data = useLoaderData() as Awaited<ReturnType<typeof loader>>
-  return <div>{data.id}</div>
-}
-```
+## Status
 
-Each module is imported lazily as:
-
-```js
-{ path: ':id', lazy: async () => { const m = await import('/abs/users/[id].tsx'); return { Component: m.default, ...m } } }
-```
-
-so the whole module — component, loader, boundary — is split into its own
-chunk and only loaded when the route matches.
-
-## File naming rules
-
-| File / folder           | Result                     |
-| ----------------------- | -------------------------- |
-| `index.tsx`             | `index: true` (default content of its parent path, or `/` at the root) |
-| `about.tsx`             | `path: 'about'`            |
-| `[id].tsx`              | `path: ':id'`              |
-| `[...rest].tsx`         | `path: '*'` (catch-all, must be a file) |
-| `users/`                | `path: 'users'` segment    |
-| `blog.tsx` + `blog/…`   | `blog.tsx` becomes the `blog` layout (wraps children, use `<Outlet/>`) |
-| `(admin)/…`             | pathless group: no URL segment; an `(admin)/index.tsx` acts as the group layout, otherwise children are flattened through |
-| dots in names           | kept literally (`a.b.tsx` → `a.b`); no implicit splitting |
-
-Directories **without** an `index` only group their children (`/users/1`
-renders `[id]` alone, no wrapper). Directories **with** an `index` render the
-index content at the directory URL and children under it.
-
-## Options
-
-```ts
-interface Options {
-  /** folder(s) to scan, default 'src/pages' */
-  routesFolder?: string | { src: string; path?: string; extensions?: string[]; exclude?: string[] } | Array<...>
-  /** page extensions, default ['.tsx', '.jsx'] */
-  extensions?: string[]
-  /** picomatch globs ignored per folder, default [] */
-  exclude?: string[]
-  /** project root, default process.cwd() */
-  root?: string
-  /** generate the ambient d.ts for the virtual module, default true */
-  dts?: boolean | string
-  /** debug logs */
-  logs?: boolean
-  /** watch pages folder, default !process.env.CI */
-  watch?: boolean
-}
-```
-
-## What is intentionally NOT supported (v0.1)
-
-These `unplugin-vue-router` features have no clean React Router equivalent and
-fail loudly (or are skipped) on purpose:
-
-- optional (`[[id]]`), repeatable (`[id]+`), partial (`prefix-[id]`) segments,
-  named views (`index@aux.vue`), SFC `<route>` blocks / `definePage`
-- route **names**: React Router has no named routes, so no typed route-name
-  registry is generated
-- `middleware` declared in a page module (React Router forbids lazy loading
-  middleware through a lazy *function*); declare it statically if needed
-
-## Known limitations
-
-- **Dev hot rescan of added/removed page files**: editing an existing page
-  gets normal Vite HMR, but adding or removing a page file does not reliably
-  trigger a route-table refresh on every platform/Vite version (see
-  `src/core/watch.ts` — a polling scanner and a watcher-based implementation
-  both exist). Restart the dev server after structural file changes if routes
-  look stale.
-- This is an early prototype: check `dist` builds, SSR data-mode behaviour and
-  the e2e tests in `tests/` before adopting it.
-
-## Development
-
-```bash
-pnpm install
-pnpm dev          # playground dev server
-pnpm build        # build the plugin (tsup)
-pnpm test         # vitest (codegen, tree, watcher, SSR e2e)
-pnpm typecheck    # tsc
-```
+Early **v0.1 prototype**. Codegen, tree rules, the virtual module and the
+route-module contract are covered by unit tests plus a React Router v8 SSR
+end-to-end suite; see [Testing](docs/testing.md). Read the
+[known limitations](docs/architecture.md#known-limitations) before adopting it.
 
 ## License
 
