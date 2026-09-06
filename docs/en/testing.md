@@ -15,6 +15,7 @@ Tests run on Node (`vitest`, no DOM) and cover seven suites:
 | `tests/plugin.test.ts` | v0.2 option resolution (`layoutFile`/`filePatterns` validation and per-folder resolution), filePatterns-filtered scanning, Vite plugin dev-server wiring (watcher-triggered reload, `watch: 'polling'` scanner) |
 | `tests/watch.test.ts` | `attachPageWatcher` add/unlink filtering, exclude handling, detach behaviour |
 | `tests/runtime.test.ts` | **end-to-end**: plugin scans a fixture folder → executes the generated virtual module → React Router v8 **static router** renders real URLs (loaders, boundaries, layouts) |
+| `tests/layouts.test.ts` | **v0.3 declarative layouts**: `layouts` option parsing/validation (missing dir/default, invalid ids), recursive layout discovery (deep default, `components` skipped, duplicates), default-shell + declared-shell generation grouping, implicit directory layouts rejected, mixed top-level blocks rejected, inert `layout` without the option |
 
 The e2e suite is the strongest signal: it exercises the exact code path a user
 hits (scan → codegen → `routes` → `createStaticHandler`/`createStaticRouter` →
@@ -66,28 +67,31 @@ pnpm -C playground build
 suite uses React Router's static router + `react-dom/server`, so it runs in
 plain Node.
 
-## Browser E2E (Playwright, v0.2)
+## Browser E2E (Playwright, v0.2/v0.3)
 
-`tests/e2e-app/` is a dedicated Vite app (with `dotNesting` and `layoutFile`
-enabled, plus a `filePatterns` folder and a parameterised-prefix folder);
-`tests/e2e/e2e.spec.ts` drives a **real Chrome** via Playwright and asserts 16
-acceptance criteria (`playwright.config.ts` starts/stops the dev server):
+Two dedicated fixture Vite apps, started/stopped automatically by
+`playwright.config.ts` (two projects, one port + spec each):
 
-- base conventions: index / static / dynamic params / same-name layout / group
-  layout / `[...rest]` 404;
-- v0.2 features: root `layout.tsx` wrapper, optional `[[chapter]].tsx` at both
-  URLs, `export const route` absolute override (including the **original disk
-  path no longer matching**), dot nesting, `filePatterns` filtering,
-  parameterised-prefix extra folder;
-- **dev-mode structural HMR**: adding a page file while the server runs makes
-  the route reachable without a restart; removing it retires the route again
-  (15 s polling budget per case).
+- **`tests/e2e-app/`** (port 5202, project `app`): the v0.2 capability matrix —
+  `dotNesting` + `layoutFile` enabled, plus a `filePatterns` folder and a
+  parameterised-prefix folder; `tests/e2e/e2e.spec.ts` asserts 16 criteria:
+  base conventions (index/static/dynamic/same-name layout/group/404), v0.2
+  features (root `layout.tsx`, optional `[[chapter]]`, absolute `path`
+  override incl. the original path no longer matching, dot nesting,
+  `filePatterns`, parameterised prefixes) and dev-mode structural HMR (adding a
+  page file makes it reachable without a restart; removing retires it — 15 s
+  polling budget per case).
+- **`tests/e2e-layouts-app/`** (port 5203, project `layouts`): v0.3 declarative
+  layouts; `tests/e2e/layouts.spec.ts` asserts 5 criteria: undeclared pages
+  (`/`, `/login`, `/settings`, `/users/*`, 404) render inside the default
+  (blank) shell, and `/dashboard` (declaring `route.layout = 'admin'`) renders
+  inside ADMIN without the BLANK shell.
 
 ```bash
-pnpm test:e2e                     # full run (auto-starts vite + browser)
+pnpm test:e2e                     # full run (both apps; auto-starts vite + browser)
 pnpm exec playwright test -- --ui # visual UI mode
 pnpm test:e2e -- -g "optional"    # filter by title
-pnpm exec playwright test -- --headed
+pnpm exec playwright test --project=layouts   # layouts app only
 ```
 
 Local runs reuse the system Chrome (`channel: 'chrome'` in

@@ -35,6 +35,7 @@ Rollup/rolldown/Webpack 的 watch 模式由打包器自身驱动：每次重建�
 | `exclude` | `string[]` | `[]` | 相对每个被扫描文件夹的 picomatch glob（例如 `['**/ignored/**']`） |
 | `layoutFile` | `string \| false` | `false` | 布局特殊文件名（不带扩展名，如 `'layout'`）。开启后 `layout.tsx` 成为所在目录路径段的布局组件；位于路由文件夹根时成为包裹所有路由的无路径布局。启用期间该名字被保留（不能作为普通页面）。 |
 | `dotNesting` | `boolean` | `false` | 把文件名里的点展开为嵌套静态路径段（`users.create.tsx` → `/users/create`，不产生 UI 嵌套）。关闭时点是字面字符（`a.b.tsx` → `/a.b`）。 |
+| `layouts` | `LayoutsOptions \| false` | `false` | **v0.3 声明式布局**：`{ dir, default }`。`dir` 为布局组件目录（相对 `root`，布局文件按文件名递归发现，跳过 `components` 目录）；`default` 为默认壳布局 id（`<dir>/<default>.tsx` 必须存在，否则报错）。开启后：所有未声明的顶层路由包进默认壳；声明 `route.layout = '…'` 的页面换到对应壳；目录隐式布局（同名布局/组壳/`layoutFile`）被禁止并报错。 |
 | `root` | `string` | `process.cwd()` | 项目根目录；所有相对路径都相对于它解析 |
 | `dts` | `boolean \| string` | auto | 为虚拟模块生成环境声明（含 `AppRoutePath`/`RouteParams` 等类型面）。`false` 表示禁用；字符串为输出路径（相对于 `root`）。当能解析到 `typescript` 时默认开启。 |
 | `logs` | `boolean` | `false` | 调试输出（扫描树、文件写入） |
@@ -218,6 +219,13 @@ import type {
 | `route config "caseSensitive" cannot apply to an index route` / `is ambiguous on an optional segment file` | 语义不明的覆盖 |
 | `… only literal values are supported …` | `export const route` 含计算表达式 |
 | `… must be an object literal` / `unknown key "X"` / `duplicate key` / `duplicate \`export const route\`` | `route` 导出格式错误 |
+| `"layouts.dir" must be …` / `"layouts.default" must be …` | `layouts` 配置缺字段/非法 |
+| `"layouts" is enabled but the layouts directory "X" does not exist` | 配置了 `layouts` 但目录缺失 |
+| `"layouts.default" refers to "X" but no layout file … was found` | 默认布局文件缺失（含候选列表） |
+| `duplicate layout "X": found both …` | 布局目录内同名布局文件 |
+| `"file" declares layout "X" but no layout file … was found` | 页面声明的布局不存在 |
+| `implicit directory layout, which is not allowed while the "layouts" option is enabled` | `layouts` 模式下出现同名目录布局/组壳/根布局文件 |
+| `mixes pages with and without a declared layout` / `mixes declared layouts ("X" vs "Y")` | 同一顶层块内布局声明不一致 |
 
 错误以下列形式呈现：
 

@@ -15,6 +15,7 @@
 | `tests/plugin.test.ts` | v0.2 选项解析（`layoutFile`/`filePatterns` 校验与逐文件夹解析）、filePatterns 过滤扫描、Vite 插件 dev-server 接线（watcher 触发的重载、`watch: 'polling'` 轮询） |
 | `tests/watch.test.ts` | `attachPageWatcher` 的添加/删除过滤、排除项处理、detach 行为 |
 | `tests/runtime.test.ts` | **端到端（e2e）**：插件扫描测试夹具（fixtures）目录 → 执行生成的虚拟模块 → React Router v8 **静态路由**渲染真实 URL（loaders、boundaries、layouts） |
+| `tests/layouts.test.ts` | **v0.3 声明式布局**：`layouts` 选项解析/校验（dir/default 缺失、非法 id）、布局文件递归发现（深层 default、跳过 `components`、重复同名）、默认壳 + 声明换壳的生成分组、隐式目录布局禁用报错、顶层块混用报错、未开启时 `layout` 键惰性 |
 
 端到端测试套件是最强的信号：它针对已安装的 `react-router@8` 走一遍用户实际触达的完整代码路径（扫描 → 代码生成 → `routes` → `createStaticHandler`/`createStaticRouter` → `renderToString`）。
 
@@ -60,25 +61,27 @@ pnpm -C playground build
 
 `pnpm test` 刻意保持低依赖（无 jsdom/happy-dom）：端到端测试套件使用 React Router 的静态路由 + `react-dom/server`，因此可以在纯 Node 环境下运行。
 
-## 浏览器 E2E（Playwright，v0.2）
+## 浏览器 E2E（Playwright，v0.2/v0.3）
 
-`tests/e2e-app/` 是独立的 Vite 应用（开启 `dotNesting` 与 `layoutFile`，另含
-`filePatterns` 文件夹与参数化前缀文件夹）；`tests/e2e/e2e.spec.ts` 用
-Playwright 驱动**真实 Chrome** 断言 16 项验收标准（`playwright.config.ts`
-自动起/停 dev server）：
+两个独立的 fixture Vite 应用，由 `playwright.config.ts` 自动起/停 dev server
+（双 project，各配一个端口与 spec）：
 
-- 基础约定：index / 静态 / 动态参数 / 同名布局 / 路由组布局 / `[...rest]` 404；
-- v0.2 特性：根 `layout.tsx` 包装、可选参数 `[[chapter]].tsx` 双 URL、
-  `export const route` 绝对覆盖（含**原磁盘路径失效**）、点嵌套、
-  `filePatterns` 过滤、参数化前缀的多文件夹；
-- **开发期结构性 HMR**：运行中新增页面文件 → 无需重启即可访问；删除 → 路由
-  立即失效（每个用例 15 s 轮询预算）。
+- **`tests/e2e-app/`**（端口 5202，project `app`）：v0.2 能力矩阵——开启
+  `dotNesting` 与 `layoutFile`，另含 `filePatterns` 文件夹与参数化前缀文件夹；
+  `tests/e2e/e2e.spec.ts` 16 条断言：基础约定（index/静态/动态/同名布局/
+  路由组/404）、v0.2 特性（根 `layout.tsx`、可选参数 `[[chapter]]`、`path`
+  绝对覆盖含原路径失效、点嵌套、`filePatterns`、参数化前缀）、开发期结构性
+  HMR（增删页面文件即时生效，15 s 预算）。
+- **`tests/e2e-layouts-app/`**（端口 5203，project `layouts`）：v0.3 声明式
+  布局；`tests/e2e/layouts.spec.ts` 5 条断言：未声明页面（`/`、`/login`、
+  `/settings`、`/users/*`、404）都在默认（blank）壳内渲染；声明
+  `route.layout = 'admin'` 的 `/dashboard` 渲染在 ADMIN 壳且不含 BLANK 壳。
 
 ```bash
-pnpm test:e2e                     # 全量（自动起 vite + 浏览器）
+pnpm test:e2e                     # 全量（两个工程，自动起 vite + 浏览器）
 pnpm exec playwright test -- --ui # 可视化 UI 模式
 pnpm test:e2e -- -g "optional"    # 按标题过滤
-pnpm exec playwright test -- --headed
+pnpm exec playwright test --project=layouts   # 只跑 v0.3 布局工程
 ```
 
 本地复用系统 Chrome（`playwright.config.ts` 的 `channel: 'chrome'`，免下载）；

@@ -35,6 +35,21 @@ export default function reactRouter(options: Options = {}): Plugin {
     ? (message: string) => console.log('[unplugin-react-router]', message)
     : undefined
 
+  /** Watched folders = page folders (+ the layouts dir, when enabled). */
+  const watchedFolders = () => {
+    const folders = [...resolved.routesFolder]
+    if (resolved.layouts) {
+      folders.push({
+        src: resolved.layouts.dir,
+        path: '',
+        extensions: [...resolved.layouts.extensions],
+        exclude: [],
+        filePatterns: null,
+      })
+    }
+    return folders
+  }
+
   return {
     name: 'unplugin-react-router',
     enforce: 'pre',
@@ -88,7 +103,7 @@ export default function reactRouter(options: Options = {}): Plugin {
         // forced polling, or no bundler watcher to tap
         logger?.('dev watcher: polling scanner')
         const scanner = createPollingScanner({
-          folders: resolved.routesFolder,
+          folders: watchedFolders(),
           onChanged,
           logger,
         })
@@ -98,7 +113,7 @@ export default function reactRouter(options: Options = {}): Plugin {
         logger?.('dev watcher: dev-server file watcher')
         const attached = attachPageWatcher({
           watcher: server.watcher,
-          folders: resolved.routesFolder,
+          folders: watchedFolders(),
           onChanged,
           logger,
         })

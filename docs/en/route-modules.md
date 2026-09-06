@@ -52,6 +52,11 @@ export default function User() {
 | `path` | `string` | Overrides the generated path of the record. **Starting with `/` = absolute URL**: since React Router does not allow a child record with an absolute path inconsistent with its parent chain, the route is **promoted to the top level** (its on-disk parent directory stops generating routes if it becomes empty as a result). Not starting with `/` = overrides the current record’s relative path value |
 | `caseSensitive` | `boolean` | the generated record carries `caseSensitive` |
 | `handle` | any serialisable literal | the generated record statically carries `handle` (no need to also export `handle` from the module) |
+| `layout` | `string` (v0.3) | **Declarative layout binding**: the top-level member this page belongs to is wrapped by `<layouts.dir>/<layout>.tsx` instead of the default shell. Only active while the `layouts` option is enabled; writing it without the option is inert. Layouts apply at *top-level member* granularity — every page of the same top-level directory block must agree (all undeclared → default shell; all the same layout → that layout) |
+
+> Full `layout` rules (layout discovery, default shell, shell swapping and
+> mixed-block errors) live in
+> [File conventions → Declarative layouts](file-conventions.md).
 
 Rules and limits:
 

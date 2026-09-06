@@ -35,6 +35,13 @@ export interface PageRouteConfig {
   caseSensitive?: boolean
   /** Static `handle` merged onto the generated route record. */
   handle?: unknown
+  /**
+   * Declarative layout binding (requires the `layouts` option): the top-level
+   * member this page belongs to is wrapped by the named layout instead of the
+   * default one. `layout` applies at *top-level member* granularity — pages
+   * inside the same top-level directory block must agree on one layout.
+   */
+  layout?: string
 }
 
 /**
@@ -56,7 +63,7 @@ export function paramKeysOfPath(path: string): string[] {
   return keys
 }
 
-const ALLOWED_KEYS = ['path', 'caseSensitive', 'handle'] as const
+const ALLOWED_KEYS = ['path', 'caseSensitive', 'handle', 'layout'] as const
 
 function isWordChar(ch: string): boolean {
   return /[A-Za-z0-9_$]/.test(ch)
@@ -487,9 +494,23 @@ function validateConfig(
       'route config "caseSensitive" must be a boolean.'
     )
   }
+  const rawLayout = value.layout
+  if (rawLayout !== undefined) {
+    if (
+      typeof rawLayout !== 'string' ||
+      rawLayout.length === 0 ||
+      !/^[\w-]+$/.test(rawLayout)
+    ) {
+      throw new RouteConfigParseError(
+        filePath,
+        'route config "layout" must be a non-empty layout id (letters, digits, "-", "_").'
+      )
+    }
+  }
   const config: PageRouteConfig = {}
   if (rawPath !== undefined) config.path = rawPath
   if (rawCase !== undefined) config.caseSensitive = rawCase
   if (value.handle !== undefined) config.handle = value.handle
+  if (rawLayout !== undefined) config.layout = rawLayout
   return config
 }

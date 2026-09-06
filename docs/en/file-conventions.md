@@ -437,3 +437,64 @@ index, param, catch-all, group layout, organisation-only group, same-name
 layout — and the unit tests / SSR end-to-end fixtures (`tests/fixtures/`)
 additionally cover optional params (`[[chapter]]`), `path` overrides, a root
 `layout.tsx` and dot-nested pages: they are the freshest runnable references.
+
+## 12. Declarative layouts (v0.3, `layouts` option)
+
+Layout components live outside `pages` (e.g. `src/app/`) and pages stay flat in
+`src/pages`, declaring which layout wraps them in code — the React counterpart
+of the Vue `definePage`/layouts model.
+
+```ts
+// vite.config.ts
+reactRouter({
+  layouts: { dir: 'src/app', default: 'blank' },
+})
+```
+
+```txt
+src/app/                  # layout directory (relative to root; may nest freely)
+├── blank.tsx             # default shell: pages without a declaration end up here
+├── admin.tsx             # a named shell
+└── components/           # skipped — .tsx files here are never layouts
+src/pages/                # pages stay flat / grouped as usual
+├── login.tsx             # undeclared → automatically inside the blank shell
+└── dashboard.tsx         # declares layout:'admin' → moved into the admin shell
+```
+
+Rules:
+
+- **Enabling & default**: providing `layouts` turns the mode on; the `dir`
+  directory must exist and a layout file named after `default` (`blank`) must
+  be discoverable under it, otherwise build-time errors.
+- **Discovery**: layout files are looked up by **file name = layout id**
+  (`<id>.tsx`/`.jsx`) at **any depth** under `dir`; directories named
+  `components`, dot-prefixed and underscore-prefixed directories are skipped;
+  duplicate ids error.
+- **Default shell**: every **top-level member** without a `route.layout`
+  declaration (top-level page files, top-level directory/group blocks, the
+  root `index.tsx`, the `[...rest]` 404) is aggregated into the `default`
+  shell.
+- **Shell swap**: a page declaring `export const route = { layout: 'admin' }`
+  is moved out of the default shell into a sibling `admin` shell (pages of the
+  same layout share one lazy-loaded shell). URLs/params/`handle` are
+  unchanged.
+- **Granularity & mixing**: layout declarations apply per *top-level member* —
+  every page inside one top-level directory block must agree (all undeclared →
+  default; all the same layout → that layout). Mixed blocks error at build
+  time (split into separate top-level files or route groups).
+- **Mutually exclusive with directory layouts**: while `layouts` is on,
+  directories no longer imply layouts — same-name directory layouts (§4a),
+  group index shells (§4b) and `layoutFile` (§4d) are rejected with guidance;
+  plain `index.tsx` "default content" pages are unaffected.
+- **Page syntax**: `RouteConfig.layout?: string` — same build-time static
+  extraction as `path`/`caseSensitive`; inert when `layouts` is not enabled.
+
+```tsx
+// src/pages/dashboard.tsx
+export const route = { layout: 'admin' }
+export default function Dashboard() { … }
+```
+
+> Layout components in `src/app` are plain React components rendering an
+> `<Outlet/>` for the wrapped page; do not place layout files under
+> `src/pages`.

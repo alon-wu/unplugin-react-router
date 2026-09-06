@@ -1,5 +1,5 @@
 import type { TreeNode } from '../core/tree.ts'
-import { hasAbsolutePath } from '../core/routeConfig.ts'
+import { hasAbsolutePath, type PageRouteConfig } from '../core/routeConfig.ts'
 import { stringify, toPosix } from '../utils/index.ts'
 
 /**
@@ -14,7 +14,21 @@ import { stringify, toPosix } from '../utils/index.ts'
  * absolute child paths that do not match the parent chain), so it is promoted
  * to a top-level route; its on-disk ancestors produce no route when they
  * become empty.
+ *
+ * With a {@link LayoutContext} (the `layouts` option) every *top-level member*
+ * (root index, top-level directory/leaf records, promoted routes) is grouped
+ * into a pathless layout shell: members without a declared `layout` share the
+ * default layout shell; members declaring `layout: 'admin'` are moved out of
+ * the default shell into a sibling `admin` shell.
  */
+
+/** Layout context used to wrap top-level members (v0.3 `layouts` option). */
+export interface LayoutContext {
+  /** Id of the default layout that wraps undeclared top-level members. */
+  defaultId: string
+  /** Resolved layout id → layout module file (absolute path). */
+  layoutFiles: Map<string, string>
+}
 
 function indentBlock(block: string, prefix: string): string {
   return prefix + block.replace(/\n/g, '\n' + prefix)
@@ -109,6 +123,14 @@ function collectPromoted(root: TreeNode): TreeNode[] {
   })
 }
 
+/** Deterministic sibling order (splat last). */
+function sortedChildren(parent: TreeNode): TreeNode[] {
+  return [...parent.children.values()].sort((a, b) => {
+    const rank = (n: TreeNode) => (n.kind === 'splat' ? 1 : 0)
+    return rank(a) - rank(b) || (a.rawSegment < b.rawSegment ? -1 : 1)
+  })
+}
+
 /**
  * Records of the route *segments* directly under `parent` (its `children`),
  * e.g. `about`, `users/`, `(admin)/`. Promoted (absolute-override) leaves are
@@ -116,11 +138,7 @@ function collectPromoted(root: TreeNode): TreeNode[] {
  * with the splat last.
  */
 function genChildRecords(parent: TreeNode, indent: number): string[] {
-  const children = [...parent.children.values()].sort((a, b) => {
-    const rank = (n: TreeNode) => (n.kind === 'splat' ? 1 : 0)
-    return rank(a) - rank(b) || (a.rawSegment < b.rawSegment ? -1 : 1)
-  })
-  return children
+  return sortedChildren(parent)
     .map((child) => genNodeRecord(child, indent))
     .filter((record): record is string => record !== null)
 }
@@ -198,13 +216,164 @@ export function genNodeRecord(node: TreeNode, indent: number): string | null {
 }
 
 /**
+ * Effective layout of a top-level subtree member. Layouts apply at top-level
+ * member granularity: every page of the subtree must agree on one declared
+ * layout (or none). Promoted (absolute-path) leaves are their own members and
+ * are excluded here.
+ */
+function subtreeLayout(node: TreeNode, ctx: LayoutContext): string {
+  let explicit: string | undefined
+  let sawUndeclared = false
+
+  const throwMix = (layout: string, file: string): never => {
+    throw new Error(
+      `[unplugin-react-router] top-level member "${node.file ?? node.indexFile ?? file}" ` +
+        'mixes pages with and without a declared layout — the whole block must ' +
+        `agree on one layout (undeclared pages use "${ctx.defaultId}", conflicting ` +
+        `with "${layout}" from ${file}). Give every page of this block the same ` +
+        'layout, or split it into separate top-level files / route groups.'
+    )
+  }
+
+  const considerPage = (config: PageRouteConfig | undefined, file: string): void => {
+    const layout = config?.layout
+    if (layout === undefined) {
+      if (explicit !== undefined) throwMix(explicit, file)
+      sawUndeclared = true
+      return
+    }
+    if (explicit === undefined) {
+      if (sawUndeclared) throwMix(layout, file)
+      explicit = layout
+    } else if (explicit !== layout) {
+      throwMix(layout, file)
+    }
+  }
+
+  const walk = (n: TreeNode): void => {
+    if (!isPromotedLeaf(n)) {
+      if (n.file) considerPage(n.fileConfig, n.file)
+      if (n.indexFile) considerPage(n.indexConfig, n.indexFile)
+    }
+    for (const child of n.children.values()) walk(child)
+  }
+  walk(node)
+
+  return explicit ?? ctx.defaultId
+}
+
+/** Build the pathless layout-shell record wrapping `members`. */
+function genShellRecord(layoutId: string, layoutFile: string, members: string[], indent: number): string {
+  const fields: Array<[string, string]> = [lazyField(layoutFile)]
+  return genObject(fields, members, indent)
+}
+
+/** Top-level members grouped by their effective layout (order-preserving). */
+function groupedMembers(
+  root: TreeNode,
+  indent: number,
+  ctx: LayoutContext
+): { members: string[]; layoutOf: (index: number) => string } {
+  // Collect (record, layout) pairs in stable order: root index, sorted child
+  // records, promoted leaves.
+  const records: string[] = []
+  const layouts: string[] = []
+
+  const push = (record: string | null, layout: string): void => {
+    if (record === null) return
+    records.push(record)
+    layouts.push(layout)
+  }
+
+  if (root.indexFile) {
+    const fields: Array<[string, string]> = [['index', 'true']]
+    fields.push(...configFieldsOf(root, 'index'))
+    fields.push(lazyField(root.indexFile))
+    push(genObject(fields, null, indent + 2), root.indexConfig?.layout ?? ctx.defaultId)
+  }
+
+  for (const child of sortedChildren(root)) {
+    const record = genNodeRecord(child, indent + 2)
+    if (record !== null) {
+      push(record, subtreeLayout(child, ctx))
+    }
+  }
+
+  for (const leaf of collectPromoted(root)) {
+    const fields: Array<[string, string]> = [pathField(leaf)]
+    fields.push(...configFields(leaf.fileConfig))
+    fields.push(lazyField(leaf.file!))
+    push(genObject(fields, null, indent + 2), leaf.fileConfig?.layout ?? ctx.defaultId)
+  }
+
+  return {
+    members: records,
+    layoutOf: (index: number) => layouts[index],
+  }
+}
+
+/**
+ * Route records for the whole tree root with the `layouts` option enabled:
+ * top-level members are wrapped by pathless layout shells. The default layout
+ * shell comes first (when it has members), then the named layout shells in id
+ * order.
+ */
+function genLayoutsRecords(root: TreeNode, indent: number, ctx: LayoutContext): string[] {
+  if (root.file) {
+    throw new Error(
+      '[unplugin-react-router] a root layout file (layoutFile) cannot be combined ' +
+        'with the "layouts" option. Use layouts.default as the global root shell ' +
+        'and remove layoutFile / the root layout.tsx.'
+    )
+  }
+  const { members, layoutOf } = groupedMembers(root, indent, ctx)
+  const groups = new Map<string, string[]>()
+  for (let i = 0; i < members.length; i++) {
+    const layout = layoutOf(i)
+    const list = groups.get(layout)
+    if (list) list.push(members[i])
+    else groups.set(layout, [members[i]])
+  }
+
+  const layoutOrder = [
+    ctx.defaultId,
+    ...[...groups.keys()].filter((id) => id !== ctx.defaultId).sort(),
+  ]
+  const shells: string[] = []
+  for (const id of layoutOrder) {
+    const list = groups.get(id)
+    if (!list || list.length === 0) continue
+    const layoutFile = ctx.layoutFiles.get(id)
+    if (!layoutFile) {
+      throw new Error(
+        `[unplugin-react-router] layout "${id}" was declared by a page but no ` +
+          'matching layout file was found in the layouts directory.'
+      )
+    }
+    shells.push(genShellRecord(id, layoutFile, list, indent))
+  }
+  return shells
+}
+
+/**
  * Route records for the whole tree root. The root's own `index` file becomes
  * a top-level `{ index: true }` route (matching `/`); a root layout file
  * (layout.tsx with `layoutFile` enabled) becomes a pathless wrapper around
  * every route; leaves with an absolute `path` override are promoted to
  * top-level routes (inside the wrapper when there is one).
+ *
+ * When `ctx` is provided (the `layouts` option), top-level members are
+ * grouped into pathless layout shells instead (see {@link genLayoutsRecords}).
  */
-export function genTopLevelRecords(root: TreeNode, indent: number): string[] {
+export function genTopLevelRecords(
+  root: TreeNode,
+  indent: number,
+  ctx?: LayoutContext
+): string[] {
+  if (ctx) {
+    return genLayoutsRecords(root, indent, ctx)
+  }
+
   const records: string[] = []
   let indexRecord: string | null = null
   if (root.indexFile) {
@@ -247,8 +416,8 @@ export function genTopLevelRecords(root: TreeNode, indent: number): string[] {
  * types are provided by the ambient `.d.ts` generated next to the project
  * root (`typed-routes.d.ts`).
  */
-export function generateRouteRecords(root: TreeNode): string {
-  const records = genTopLevelRecords(root, 2)
+export function generateRouteRecords(root: TreeNode, ctx?: LayoutContext): string {
+  const records = genTopLevelRecords(root, 2, ctx)
   const inner =
     records.length > 0
       ? '\n' + records.map((r) => indentBlock(r, '  ')).join(',\n') + '\n'

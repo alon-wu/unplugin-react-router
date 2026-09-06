@@ -128,4 +128,31 @@ describe('extractRouteConfig', () => {
       handle: { key: 'value' },
     })
   })
+
+  it('extracts the layout id (v0.3 layouts)', () => {
+    expect(
+      extractRouteConfig(
+        `export const route = { layout: 'admin' }\nexport default function P() { return null }`,
+        FILE
+      )
+    ).toEqual({ layout: 'admin' })
+    expect(
+      extractRouteConfig(
+        `export const route = { path: '/x', layout: 'blank' }\nexport default function P() { return null }`,
+        FILE
+      )
+    ).toEqual({ path: '/x', layout: 'blank' })
+  })
+
+  it('rejects invalid layout values', () => {
+    expect(() =>
+      extractRouteConfig(`export const route = { layout: 42 }\n`, FILE)
+    ).toThrow(/"layout" must be a non-empty layout id/)
+    expect(() =>
+      extractRouteConfig(`export const route = { layout: '' }\n`, FILE)
+    ).toThrow(/"layout" must be a non-empty layout id/)
+    expect(() =>
+      extractRouteConfig(`export const route = { layout: 'bad name' }\n`, FILE)
+    ).toThrow(/"layout" must be a non-empty layout id/)
+  })
 })

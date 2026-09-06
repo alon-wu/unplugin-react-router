@@ -376,3 +376,55 @@ reactRouter({
 ## 11. Playground 示例
 
 仓库中的 playground（`playground/src/pages`）实践了 index、参数、兜底路由（catch-all）、路由组布局、仅整理用路由组、同名布局等约定。单元测试与 SSR 端到端测试的 fixtures（`tests/fixtures/`）额外覆盖了可选参数 `[[chapter]]`、`path` 覆盖、根 `layout.tsx` 与点嵌套页面——它们是最新的可运行参考。
+
+## 12. 声明式布局（v0.3，`layouts` 选项）
+
+布局组件集中在插件之外的目录（如 `src/app/`），页面平铺在 `src/pages`、用
+代码声明"我挂哪个布局"——这是 Vue 生态 `definePage`/layouts 心智在 React 侧
+的等价物。
+
+```ts
+// vite.config.ts
+reactRouter({
+  layouts: { dir: 'src/app', default: 'blank' },
+})
+```
+
+```txt
+src/app/                  # 布局目录（相对 root；可按任意层级分布）
+├── blank.tsx             # 默认壳：default 指向它，未声明页面都包进来
+├── admin.tsx             # 业务壳
+└── components/           # 跳过——其中的 .tsx 不会被当作布局
+src/pages/                # 页面照旧平铺/分目录
+├── login.tsx             # 未声明 → 自动进 blank 壳
+└── dashboard.tsx         # 声明 layout:'admin' → 提出并进 admin 壳
+```
+
+规则：
+
+- **启用与默认**：配置了 `layouts` 即开启；`dir` 目录必须存在，且递归可发现
+  名为 `default` 的布局文件（`blank`），否则构建期报错。
+- **布局发现**：在 `dir` 下**任意深度**按文件名匹配 `<id>.tsx`/`.jsx`；
+  跳过名为 `components` 的目录与点/下划线开头目录；同名冲突报错。
+- **默认壳**：所有未声明 `route.layout` 的**顶层成员**（顶层页面文件、顶层
+  目录/组块、首页 `index.tsx`、`[...rest]` 404）聚合进 `default` 壳。
+- **换壳**：页面声明 `export const route = { layout: 'admin' }` → 该顶层成员
+  从默认壳提出，放进平级的 `admin` 壳（同布局共享一个懒加载壳）。
+  URL/参数/`handle` 均不变。
+- **顶层成员粒度与混用**：布局声明以**顶层成员**为单位——一个顶层目录块内
+  的所有页面必须一致（全未声明 → 默认；全同一布局 → 该布局）；混用会构建期
+  报错（提示拆成独立顶层文件或用路由组）。
+- **与目录布局互斥**：`layouts` 开启期间，目录不再表达布局——同名目录布局
+  （§4a）、组内 `index` 壳（§4b 的"壳"含义）、`layoutFile`（§4d）若出现会被
+  报错并提示改用声明；`index.tsx` 作为"默认内容"不受影响。
+- **页面写法**：`RouteConfig.layout?: string`（与 `path`/`caseSensitive` 同属
+  构建期静态读取；未开启 `layouts` 时该键无效果）。
+
+```tsx
+// src/pages/dashboard.tsx
+export const route = { layout: 'admin' }
+export default function Dashboard() { … }
+```
+
+> `src/app` 中的布局组件是普通的 React 组件，内含 `<Outlet/>` 渲染被包裹的
+> 页面；不要在 `src/pages` 下放置布局文件。

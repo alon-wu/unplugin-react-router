@@ -4,9 +4,9 @@
 
 This page explains how the plugin works internally, why it was designed this
 way, how it compares with `unplugin-vue-router`, and what is known to be
-limited or unfinished. **This page describes v0.2**; most items listed under
-“known limitations / roadmap” in the v0.1 architecture document have landed in
-v0.2 (see the status table at the end).
+limited or unfinished. **This page describes v0.3**; v0.1 items landed in v0.2
+(see the status table at the end), and v0.3 adds declarative layouts
+(`layouts`).
 
 ## Motivation and design goals
 
@@ -287,3 +287,93 @@ module itself.
   chunks);
 - TanStack-Router-style custom typed-route integration (beyond the current
   boundary).
+
+## v0.3: declarative layouts (`layouts` option)
+
+### Motivation
+
+Until v0.2 a layout was expressed by *file position* (same-name directory
+layouts, `layoutFile`, group shells). Projects that want layout components
+centralised and pages flat in `src/pages`, with the *page code* declaring
+which layout wraps it (the Vue `definePage`/layouts model), need a different
+primitive. v0.3 adds an opt-in declarative layer; the two mental models are
+mutually exclusive via the option:
+
+- without `layouts`: identical to v0.2 (directories imply layouts);
+- with `layouts: { dir, default }`: **layouts come only from page declarations
+  + the default shell** — directories only shape URLs.
+
+### Configuration & discovery
+
+```ts
+reactRouter({
+  layouts: { dir: 'src/app', default: 'blank' },
+})
+```
+
+- `dir` resolves against `root` and must exist. Layout files are found by
+  **file name = layout id** at **any depth** under `dir` (`.tsx`/`.jsx`),
+  skipping `components` directories and dot/underscore-prefixed ones;
+  duplicate ids error.
+- `default` is the default shell: `<dir>/<default>.tsx` must be found or the
+  build fails (listing candidates).
+- A page declaring `export const route = { layout: 'admin' }` must reference an
+  id present in the discovery set (else error); without `layouts` the key is
+  inert.
+
+### Generation model (top-level shell swapping)
+
+`generateRouteRecords` switches to `genLayoutsRecords` when given a
+`LayoutContext` (defaultId + resolved layout modules):
+
+1. build the **top-level members**: the root index, sorted top-level
+   directory/leaf records and leaves promoted by an absolute `path` override;
+2. resolve each member’s layout: every page in the subtree (promoted leaves
+   excluded) must agree — all undeclared → `default`; all declaring the same
+   `layout: L` → `L`; a mix (undeclared + declared, or different declared
+   ids) errors at build time with file names and guidance;
+3. group members per layout and emit one pathless shell record
+   `{ lazy: <layout file>, children: [members…] }` each — `default` first,
+   then the named shells in id order; empty shells are omitted;
+4. URLs/params/`handle`/the type surface are unaffected by the shell swap.
+
+Members of the same layout share a **single lazy-loaded shell record** (one
+layout instance in React).
+
+### Mutual-exclusion rules while `layouts` is on
+
+These “implicit directory layouts” fail at build time with guidance (declare
+layouts instead):
+
+- same-name file + directory layouts (§4a, `blog.tsx` + `blog/`);
+- the shell meaning of route groups (`(name)/index.tsx` or layout files inside
+  groups);
+- `layoutFile` (including a root `layout.tsx` global shell).
+
+Plain `index.tsx` (“default content”) is unaffected and stays the default page
+of its path; undeclared members (the `/` home page and `[...rest]` 404
+included) go into the default shell.
+
+### Implementation map
+
+- `src/options.ts` — `LayoutsOptions`/`ResolvedLayouts` parsing & validation;
+- `src/core/context.ts` — `readLayoutFiles` (recursive discovery),
+  `assertNoImplicitLayouts`, `assertLayoutsResolve`; the layout context is
+  refreshed on every scan;
+- `src/codegen/generateRouteRecords.ts` — `LayoutContext` type,
+  `subtreeLayout` (block consistency), `groupedMembers`/`genLayoutsRecords`
+  (grouping & shell swapping);
+- `src/core/routeConfig.ts` + `src/codegen/generateDTS.ts` — static `layout`
+  key extraction and the `RouteConfig.layout` type;
+- the layouts directory is included in dev watching (layout add/remove triggers
+  a rescan).
+
+### v0.3 limitations
+
+- Layout granularity is the **top-level member**: one top-level directory
+  block cannot mix layouts (error); for per-page shells inside a directory,
+  split into separate top-level files / route groups.
+- No nested layout declarations (a page declares a single shell; for deeper
+  nesting compose inside layout components or implement via route handles).
+- `layouts` and `layoutFile`/same-name directory layouts are mutually
+  exclusive within one project (enforced by errors).

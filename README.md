@@ -35,6 +35,12 @@ src/pages/
   `[[lang]].tsx`（自动拆成两条路由）、可选的点嵌套（`dotNesting`）、可选
   `layout.tsx` 特殊文件（`layoutFile`）、多路由文件夹与前缀、自定义扩展名、
   排除规则与逐文件夹 `filePatterns`。
+- **声明式布局绑定（v0.3）**：`layouts: { dir: 'src/app', default: 'blank' }`
+  开启后，布局组件在 `dir` 下按名字递归发现（跳过 `components`）；所有未在
+  页面声明的顶层路由自动包进 `default` 壳，页面里写
+  `export const route = { layout: 'admin' }` 即被**提出并换到 admin 壳**——
+  像 Vue 生态 `definePage`/layouts 一样的按页声明体验，而页面仍平铺在
+  `src/pages`。
 - **类型化开箱即用（v0.2）**。自动生成的 `typed-routes.d.ts` 声明虚拟模块
   `unplugin-react-router/routes`，并导出 `AppRoutePath`（全部 URL 联合）、
   `RouteParams<'/users/:id'>`（逐路由参数，喂给 `useParams`）、`RouteConfig`
@@ -80,6 +86,36 @@ createRoot(document.getElementById('root')!).render(
 > 默认扫描 `src/pages/` 下的 `.tsx`/`.jsx` 文件。插件会在项目根目录生成
 > `typed-routes.d.ts`（含路由类型面；若未被自动包含，请把它加进 `tsconfig`
 > 的 `include`）。
+
+### 可选：声明式布局（v0.3）
+
+把共享布局集中到一个目录（例如 `src/app/`），页面在 `src/pages` 平铺、用
+代码声明挂哪个布局：
+
+```ts
+// vite.config.ts
+reactRouter({
+  layouts: { dir: 'src/app', default: 'blank' }, // 默认壳必须存在
+})
+```
+
+```txt
+src/app/
+├── blank.tsx        # 默认壳：包裹所有未声明的顶层页面（内含 <Outlet/>）
+└── admin.tsx        # 业务壳
+src/pages/
+├── login.tsx        # 未声明 → 自动挂 blank 壳
+└── dashboard.tsx    # 声明 → 换到 admin 壳
+```
+
+```tsx
+// src/pages/dashboard.tsx
+export const route = { layout: 'admin' } // 提出到 src/app/admin.tsx 壳下
+```
+
+开启 `layouts` 后，目录不再表达布局（只贡献 URL）；同名目录布局/`layoutFile`
+会被构建期报错并给出指引。详见
+[文件约定 → 声明式布局](docs/zh/file-conventions.md)。
 
 类型化用法示例（生成文件导出，纯类型、无运行时开销）：
 

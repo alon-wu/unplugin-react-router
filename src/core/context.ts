@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import { dirname, sep } from 'node:path'
-import type { ResolvedOptions } from '../options.ts'
+import type { ResolvedOptions, ResolvedLayouts } from '../options.ts'
 import {
   addFileToTree,
   createRootNode,
@@ -8,7 +8,10 @@ import {
   validateTreeConfig,
   type TreeNode,
 } from './tree.ts'
-import { generateRouteRecords } from '../codegen/generateRouteRecords.ts'
+import {
+  generateRouteRecords,
+  type LayoutContext,
+} from '../codegen/generateRouteRecords.ts'
 import { generateDTS } from '../codegen/generateDTS.ts'
 import { extractRouteConfig, type PageRouteConfig } from './routeConfig.ts'
 import { createFolderMatcher, relToFolder, stripExtension } from './watch.ts'
@@ -59,6 +62,142 @@ async function walkPageFiles(
   return out
 }
 
+/** Strip the longest matching layout extension; `null` when none matches. */
+function stripLayoutExtension(
+  fileName: string,
+  extensions: string[]
+): string | null {
+  for (const ext of extensions) {
+    if (fileName.endsWith(ext) && fileName.length > ext.length) {
+      return fileName.slice(0, -ext.length)
+    }
+  }
+  return null
+}
+
+/**
+ * Discover layout files under the layouts directory (any depth), mapping the
+ * layout id (file base name) to its absolute path. `components` directories
+ * and dot/underscore-prefixed directories are skipped; duplicate ids error.
+ */
+async function readLayoutFiles(layouts: ResolvedLayouts): Promise<Map<string, string>> {
+  const { dir, defaultId, extensions } = layouts
+  const files = new Map<string, string>()
+
+  const walk = async (current: string): Promise<void> => {
+    const dirents = await fs.readdir(current, { withFileTypes: true }).catch(() => null)
+    if (dirents === null) {
+      // layouts dir itself missing is reported once by the caller; deeper
+      // read errors are treated as "nothing here"
+      return
+    }
+    for (const dirent of dirents) {
+      if (dirent.name.startsWith('.') || dirent.name.startsWith('_')) continue
+      const full = current + sep + dirent.name
+      if (dirent.isDirectory()) {
+        if (dirent.name === 'components') continue // not layouts
+        await walk(full)
+      } else if (dirent.isFile()) {
+        const id = stripLayoutExtension(dirent.name, extensions)
+        if (id === null) continue
+        const existing = files.get(id)
+        if (existing) {
+          throw new Error(
+            `[unplugin-react-router] duplicate layout "${id}": found both ` +
+              `${existing} and ${toPosix(full)}. Layout files must have unique ` +
+              'names across the layouts directory.'
+          )
+        }
+        files.set(id, toPosix(full))
+      }
+    }
+  }
+
+  const exists = await fs.stat(dir).then((s) => s.isDirectory()).catch(() => false)
+  if (!exists) {
+    throw new Error(
+      `[unplugin-react-router] "layouts" is enabled but the layouts directory ` +
+        `"${dir}" does not exist. Create it and add the default layout file ` +
+        `"${defaultId}.tsx".`
+    )
+  }
+  await walk(dir)
+
+  if (!files.has(defaultId)) {
+    const found = [...files.keys()].sort().join(', ') || '(none)'
+    throw new Error(
+      `[unplugin-react-router] "layouts.default" refers to "${defaultId}" but no ` +
+        `layout file "${defaultId}.tsx"/".jsx" was found under "${dir}" (found: ${found}).`
+    )
+  }
+  return files
+}
+
+/** Walk the page tree and collect every route config object. */
+function collectConfigs(root: TreeNode): Array<{ config?: PageRouteConfig; file: string }> {
+  const out: Array<{ config?: PageRouteConfig; file: string }> = []
+  const walk = (node: TreeNode): void => {
+    if (node.file) out.push({ config: node.fileConfig, file: node.file })
+    if (node.indexFile) out.push({ config: node.indexConfig, file: node.indexFile })
+    for (const child of node.children.values()) walk(child)
+  }
+  walk(root)
+  return out
+}
+
+/**
+ * With `layouts` enabled, directory-based implicit layouts are rejected so the
+ * declarative model stays unambiguous: same-name directory layouts, per-folder
+ * `layoutFile` layouts, root layout files and pathless group shells.
+ */
+function assertNoImplicitLayouts(root: TreeNode): void {
+  const reject = (file: string, hint: string): never => {
+    throw new Error(
+      `[unplugin-react-router] "${file}" defines an implicit directory layout, ` +
+        `which is not allowed while the "layouts" option is enabled (${hint}). ` +
+        'Put shared chrome into a layout component in the layouts directory and ' +
+        `declare it on pages with \`export const route = { layout: '…' }\`.`
+    )
+  }
+  if (root.file) {
+    reject(root.file, 'root layout file (layoutFile)')
+  }
+  const walk = (node: TreeNode): void => {
+    if (node.kind === 'group') {
+      if (node.file || node.indexFile) {
+        reject(
+          node.file ?? node.indexFile!,
+          'pathless group shells (group index / layout file)'
+        )
+      }
+    } else if (node.file && (node.children.size > 0 || node.indexFile !== null)) {
+      // same-name layout or per-folder layoutFile component — a directory role
+      // node with a component. Plain leaf pages keep their file, that's fine.
+      reject(node.file, 'same-name or layoutFile directory layout')
+    }
+    for (const child of node.children.values()) walk(child)
+  }
+  for (const child of root.children.values()) walk(child)
+}
+
+/** Every declared `layout` must exist among the discovered layout files. */
+function assertLayoutsResolve(
+  root: TreeNode,
+  layoutFiles: Map<string, string>
+): void {
+  for (const { config, file } of collectConfigs(root)) {
+    const layout = config?.layout
+    if (layout !== undefined && !layoutFiles.has(layout)) {
+      const found = [...layoutFiles.keys()].sort().join(', ') || '(none)'
+      throw new Error(
+        `[unplugin-react-router] "${file}" declares layout "${layout}" but no ` +
+          `layout file "${layout}.tsx"/".jsx" was found in the layouts directory ` +
+          `(found: ${found}).`
+      )
+    }
+  }
+}
+
 export function createRoutesContext(options: ResolvedOptions): RoutesContext {
   const log = options.logs
     ? (...args: unknown[]) => console.log('[unplugin-react-router]', ...args)
@@ -67,6 +206,8 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
   let root: TreeNode = createRootNode()
   /** Absolute POSIX paths of every page file, sorted — signature of the tree. */
   let signature = ''
+  /** Layout context used by codegen when the `layouts` option is enabled. */
+  let layoutContext: LayoutContext | undefined
 
   let server: ServerContext | undefined
 
@@ -126,6 +267,19 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
     // known — enforce config placement rules now.
     validateTreeConfig(newRoot)
 
+    if (options.layouts) {
+      // discover + validate layouts, refresh the layout module map
+      const layoutFiles = await readLayoutFiles(options.layouts)
+      assertNoImplicitLayouts(newRoot)
+      assertLayoutsResolve(newRoot, layoutFiles)
+      layoutContext = {
+        defaultId: options.layouts.defaultId,
+        layoutFiles,
+      }
+    } else {
+      layoutContext = undefined
+    }
+
     root = newRoot
     signature = [...collected].sort().join('\n')
 
@@ -163,7 +317,7 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
     },
 
     getRoutes() {
-      return generateRouteRecords(root)
+      return generateRouteRecords(root, layoutContext)
     },
 
     getRoot() {

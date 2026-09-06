@@ -84,6 +84,11 @@ declare module 'unplugin-react-router/routes' {
     caseSensitive?: boolean
     /** Static \`handle\` merged onto the generated route record. */
     handle?: unknown
+    /**
+     * Declarative layout binding (requires the \`layouts\` vite option): this
+     * top-level page is wrapped by the named layout instead of the default.
+     */
+    layout?: string
   }
 
   /**

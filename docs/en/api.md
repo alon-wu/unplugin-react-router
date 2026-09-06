@@ -37,6 +37,7 @@ All options are optional.
 | `exclude` | `string[]` | `[]` | picomatch globs relative to each scanned folder (e.g. `['**/ignored/**']`) |
 | `layoutFile` | `string \| false` | `false` | The layout special-file name (no extension, e.g. `'layout'`). When enabled, `layout.tsx` becomes the layout component of its directory’s path segment; at the root of a routes folder it becomes a pathless layout wrapping every route. The name is reserved while enabled (cannot be a plain page). |
 | `dotNesting` | `boolean` | `false` | Expand dots in file names into nested static path segments (`users.create.tsx` → `/users/create`, no UI nesting). When off, dots are literal characters (`a.b.tsx` → `/a.b`). |
+| `layouts` | `LayoutsOptions \| false` | `false` | **v0.3 declarative layouts**: `{ dir, default }`. `dir` is the layout directory (relative to `root`; layout files are discovered recursively by file name, `components` dirs skipped); `default` is the default-shell layout id (`<dir>/<default>.tsx` must exist, otherwise an error). When enabled: undeclared top-level routes are wrapped by the default shell; pages declaring `route.layout = '…'` are moved into the matching shell; directory-based implicit layouts (same-name layouts, group shells, `layoutFile`) are rejected with guidance. |
 | `root` | `string` | `process.cwd()` | Project root; all relative paths resolve against it |
 | `dts` | `boolean \| string` | auto | Generate the ambient declaration for the virtual module (including the `AppRoutePath`/`RouteParams` type surface). `false` disables; a string is the output path (relative to `root`). Defaults on when `typescript` can be resolved. |
 | `logs` | `boolean` | `false` | Debug output (scan tree, file writes) |
@@ -228,6 +229,13 @@ the offending file path where relevant. Exact messages (fragments):
 | `route config "caseSensitive" cannot apply to an index route` / `is ambiguous on an optional segment file` | overrides with ambiguous semantics |
 | `… only literal values are supported …` | `export const route` contains a computed expression |
 | `… must be an object literal` / `unknown key "X"` / `duplicate key` / `duplicate \`export const route\`` | malformed `route` export |
+| `"layouts.dir" must be …` / `"layouts.default" must be …` | `layouts` config missing/invalid fields |
+| `"layouts" is enabled but the layouts directory "X" does not exist` | `layouts` configured but the directory is missing |
+| `"layouts.default" refers to "X" but no layout file … was found` | default layout file missing (with candidates) |
+| `duplicate layout "X": found both …` | two layout files with the same id |
+| `"file" declares layout "X" but no layout file … was found` | a page declares an unknown layout |
+| `implicit directory layout, which is not allowed while the "layouts" option is enabled` | same-name directory layouts / group shells / root layout files under the `layouts` mode |
+| `mixes pages with and without a declared layout` / `mixes declared layouts ("X" vs "Y")` | inconsistent layout declarations inside one top-level block |
 
 Errors surface as:
 

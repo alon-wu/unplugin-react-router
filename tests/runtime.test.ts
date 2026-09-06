@@ -126,3 +126,30 @@ describe('v0.2 additions end-to-end', () => {
     expect(html).toContain('SETTINGS-PROFILE')
   })
 })
+
+describe('v0.3 layouts end-to-end (declarative layout shells)', () => {
+  const layoutsCase = {
+    folder: 'layouts-app/pages',
+    options: { layouts: { dir: 'layouts-app/app', default: 'blank' } },
+  }
+
+  it('wraps undeclared pages in the default (blank) shell', async () => {
+    const home = await renderRoute('/', layoutsCase)
+    expect(home).toContain('BLANK-SHELL')
+    expect(home).toContain('HOME-LAY')
+    const login = await renderRoute('/login', layoutsCase)
+    expect(login).toContain('BLANK-SHELL')
+    expect(login).toContain('LOGIN-LAY')
+    // a directory member keeps its nested routes inside the default shell
+    const user = await renderRoute('/users/42', layoutsCase)
+    expect(user).toContain('BLANK-SHELL')
+    expect(user).toContain('USER-LAY')
+  })
+
+  it('moves a declared page out of the default shell into the admin shell', async () => {
+    const html = await renderRoute('/dashboard', layoutsCase)
+    expect(html).toContain('ADMIN-SHELL')
+    expect(html).toContain('DASH-LAY')
+    expect(html).not.toContain('BLANK-SHELL')
+  })
+})

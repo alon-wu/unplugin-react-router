@@ -49,6 +49,48 @@ export type RoutesFolder =
   | RoutesFolderOption
   | Array<string | RoutesFolderOption>
 
+/**
+ * Declarative layout binding (v0.3). When provided, the layout system is
+ * enabled:
+ *
+ * - layout components are discovered recursively under `dir` (files named
+ *   after the layout id, e.g. `admin.tsx` for `layout: 'admin'`), skipping
+ *   `components` directories and dot/underscore-prefixed folders;
+ * - `default` is the id of the layout that wraps every top-level route which
+ *   does not declare a layout (it must exist under `dir`);
+ * - a page that declares `export const route = { layout: 'admin' }` is moved
+ *   out of the default wrapper and wrapped by the `admin` layout instead
+ *   (default and named layout wrappers are siblings);
+ * - while enabled, directory-based implicit layouts (same-name layout files,
+ *   pathless group shells, `layoutFile`) are rejected with guidance.
+ */
+export interface LayoutsOptions {
+  /**
+   * Directory (relative to `root`) that contains the layout component files.
+   * Layout files may live at any depth inside it. `components` directories
+   * are skipped while discovering layouts.
+   */
+  dir: string
+
+  /**
+   * Id of the default layout used for top-level routes that do not declare a
+   * `layout`. A matching file must exist under `dir`.
+   */
+  default: string
+}
+
+/** Layout extensions considered while discovering layout files. */
+export const LAYOUT_EXTENSIONS = ['.tsx', '.jsx'] as const
+
+export interface ResolvedLayouts {
+  /** Absolute path of the layout directory. */
+  dir: string
+  /** Id of the default layout. */
+  defaultId: string
+  /** Layout file extensions (longest first). */
+  extensions: string[]
+}
+
 export interface Options {
   /**
    * Folder(s) to scan for page files and generate routes. Defaults to
@@ -95,6 +137,13 @@ export interface Options {
    * @default `false`
    */
   dotNesting?: boolean
+
+  /**
+   * Declarative layout binding (see {@link LayoutsOptions}). Absent/`false` =
+   * current directory-based behaviour, unchanged.
+   * @default `false`
+   */
+  layouts?: LayoutsOptions | false
 
   /**
    * Root of the project. All paths are resolved relative to this one.
@@ -215,6 +264,8 @@ export interface ResolvedOptions {
   layoutFileName: string | null
   /** Expand dots in file names into nested static segments. */
   dotNesting: boolean
+  /** Declarative layout binding, or `null` when disabled. */
+  layouts: ResolvedLayouts | null
   dts: string | false
   logs: boolean
   watch: boolean | 'polling'
@@ -308,11 +359,43 @@ export function resolveOptions(options: Options = {}): ResolvedOptions {
     )
   }
 
+  let layouts: ResolvedLayouts | null = null
+  if (options.layouts !== undefined && options.layouts !== false) {
+    const { dir, default: defaultId } = options.layouts
+    if (typeof dir !== 'string' || dir.trim() === '') {
+      throw new Error(
+        '[unplugin-react-router] "layouts.dir" must be a non-empty directory ' +
+          'path (e.g. "src/app").'
+      )
+    }
+    if (typeof defaultId !== 'string' || defaultId.trim() === '') {
+      throw new Error(
+        '[unplugin-react-router] "layouts.default" must be a non-empty layout ' +
+          'id (e.g. "blank"). A layout file with that name must exist under ' +
+          'the layouts directory.'
+      )
+    }
+    if (!/^[\w-]+$/.test(defaultId)) {
+      throw new Error(
+        `[unplugin-react-router] "layouts.default" ("${defaultId}") must be a ` +
+          'plain file name without extension (letters, digits, "-", "_").'
+      )
+    }
+    layouts = {
+      dir: nodeResolve(root, dir),
+      defaultId: defaultId.trim(),
+      extensions: [...new Set(LAYOUT_EXTENSIONS)].sort(
+        (a, b) => b.length - a.length
+      ),
+    }
+  }
+
   return {
     root,
     routesFolder,
     layoutFileName: layoutFile,
     dotNesting: options.dotNesting ?? DEFAULT_OPTIONS.dotNesting,
+    layouts,
     dts,
     logs: options.logs ?? DEFAULT_OPTIONS.logs,
     watch: options.watch ?? DEFAULT_OPTIONS.watch,

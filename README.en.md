@@ -39,6 +39,14 @@ src/pages/
   opt-in dot-nesting (`dotNesting`), an opt-in `layout.tsx` special file
   (`layoutFile`), multiple routes folders with prefixes, custom extensions,
   excludes and per-folder `filePatterns`.
+- **Declarative layout binding (v0.3).** `layouts: { dir: 'src/app',
+  default: 'blank' }` switches on a page-declared layout model: layout
+  components are discovered by name under `dir` (recursively, `components`
+  dirs skipped); every top-level page that does not declare a layout is
+  wrapped by the `default` shell, and writing
+  `export const route = { layout: 'admin' }` in a page moves it into the
+  `admin` shell — like the Vue `definePage`/layouts experience, while pages
+  stay flat in `src/pages`.
 - **Typed out of the box (v0.2).** The generated `typed-routes.d.ts` declares
   the virtual `unplugin-react-router/routes` module and exports
   `AppRoutePath` (a union of every URL), `RouteParams<'/users/:id'>`
@@ -89,6 +97,37 @@ createRoot(document.getElementById('root')!).render(
 > so TypeScript understands the virtual import (add it to your `tsconfig`
 > `include` if not picked up).
 
+### Optional: declarative layouts (v0.3)
+
+Keep shared layout components in one directory (e.g. `src/app/`), leave pages
+flat in `src/pages`, and declare per page which layout wraps it:
+
+```ts
+// vite.config.ts
+reactRouter({
+  layouts: { dir: 'src/app', default: 'blank' }, // the default shell must exist
+})
+```
+
+```txt
+src/app/
+├── blank.tsx        # default shell: wraps every top-level page without a declaration (<Outlet/>)
+└── admin.tsx        # a named shell
+src/pages/
+├── login.tsx        # undeclared → automatically inside the blank shell
+└── dashboard.tsx    # declared → moved into the admin shell
+```
+
+```tsx
+// src/pages/dashboard.tsx
+export const route = { layout: 'admin' } // wrapped by src/app/admin.tsx
+```
+
+While `layouts` is on, directories no longer imply layouts (they only shape
+URLs); implicit directory layouts (`layoutFile`, same-name layouts) are
+rejected at build time with guidance. See
+[File conventions → Declarative layouts](docs/en/file-conventions.md).
+
 A typed usage example (types exported by the generated file — pure types, no
 runtime cost):
 
@@ -118,7 +157,7 @@ const known: AppRoutePath[] = ['/', '/about', '/users/:id']
 | [File conventions](docs/en/file-conventions.md) | The full file → route mapping, layouts, optional params, dot-nesting, dynamic/splat segments, edge cases and errors |
 | [Route modules](docs/en/route-modules.md) | The page-module contract, `export const route` overrides, generated lazy loader, type-surface guidance |
 | [API reference](docs/en/api.md) | `Options`, `RoutesFolderOption`, virtual module, generated files, package exports, every error message |
-| [Architecture](docs/en/architecture.md) | Motivation, module map, route-tree model, codegen, virtual module, dev/HMR behaviour, comparison with unplugin-vue-router, known limitations & v0.2 status |
+| [Architecture](docs/en/architecture.md) | Motivation, module map, route-tree model, codegen, virtual module, dev/HMR behaviour, comparison with unplugin-vue-router, known limitations & v0.3 status |
 | [Testing & contributing](docs/en/testing.md) | Test matrix, how each suite works, dev commands, how to add coverage |
 
 The Chinese version lives in [docs/zh](docs/zh/); both are kept in
@@ -136,12 +175,11 @@ See [Architecture → Motivation](docs/en/architecture.md) for the full comparis
 
 ## Status
 
-**v0.2**. Codegen, tree rules, optional params, route-level overrides, the type
-surface, the virtual module and the route-module contract are covered by unit
-tests plus a React Router v8 SSR end-to-end suite (see
-[Testing & contributing](docs/en/testing.md)). Every item on the v0.1
-architecture roadmap has landed (see the status table in
-[Architecture](docs/en/architecture.md)). Releases go through changesets +
+**v0.3**. Codegen, tree rules, optional params, route-level overrides, the type
+surface, declarative layouts (`layouts`), the virtual module and the
+route-module contract are covered by unit tests plus React Router v8 SSR and
+real-browser Playwright suites (see
+[Testing & contributing](docs/en/testing.md)). Releases go through changesets +
 GitHub Actions (npm provenance); read the
 [known limitations](docs/en/architecture.md) before adopting it.
 

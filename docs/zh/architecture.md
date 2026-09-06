@@ -3,8 +3,9 @@
 # 架构
 
 本页说明插件内部如何工作、为何这样设计、它与 `unplugin-vue-router`
-的异同，以及当前已知的限制与尚未完成的部分。**本文档描述 v0.2**；v0.1 架构
-文档里"已知限制/路线图"所列各项大多已在 v0.2 落地（见文末对照表）。
+的异同，以及当前已知的限制与尚未完成的部分。**本文档描述 v0.3**；v0.1 架构
+文档里"已知限制/路线图"所列各项已在 v0.2 落地（见文末对照表），v0.3 新增
+声明式布局（`layouts`）。
 
 ## 动机与设计目标
 
@@ -248,3 +249,81 @@ TanStack Router 的做法）——这仍是本插件的边界；文档指导用�
 - 在部分 Vite 8 环境中 watcher 事件不可靠的根治（当前用 `'polling'` 兜底）；
 - 更细粒度的"路由模块拆分"（loader 与组件分 chunk）；
 - 与 TanStack Router 风格的自定义类型路由集成（超出现有边界）。
+
+## v0.3：声明式布局（`layouts` 选项）
+
+### 动机
+
+此前"布局 = 目录/文件位置"（同名目录布局、`layoutFile`、路由组壳）。对希望
+布局组件集中管理、页面在 `src/pages` 平铺、用**页面代码声明挂哪个布局**的
+项目（Vue 生态 `definePage`/layouts 心智），位置式布局不够直接。v0.3 引入
+可选的声明式布局层，两条心智模型由选项开关互斥：
+
+- 不配置 `layouts`：行为与 v0.2 完全一致（目录决定布局）；
+- 配置 `layouts: { dir, default }`：**布局只来自页面声明 + 默认壳**，目录
+  只贡献 URL。
+
+### 配置与布局发现
+
+```ts
+reactRouter({
+  layouts: { dir: 'src/app', default: 'blank' },
+})
+```
+
+- `dir` 相对 `root` 解析；必须存在。布局文件按 **文件名 = 布局 id** 在 `dir`
+  下**任意层级**递归发现（扩展 `.tsx`/`.jsx`），跳过名为 `components` 的目录
+  与点/下划线开头目录；同名布局报错。
+- `default` 为该模式下的默认壳：`<dir>/<default>.tsx` 必须能找到，否则构建期
+  报错（含候选列表）。
+- 页面声明 `export const route = { layout: 'admin' }` 时，布局 id 必须在发现
+  集合中（否则报错）；未开启 `layouts` 时该键无效果。
+
+### 生成模型（顶层换壳）
+
+`generateRouteRecords` 在提供 `LayoutContext`（defaultId + 布局模块表）时走
+`genLayoutsRecords`：
+
+1. 先生成**顶层成员**：根 index、排序后的顶层目录/叶子记录、被绝对 `path`
+   提升的叶子；
+2. 计算每个成员的归属布局：整棵子树内所有页面（跳过被提升叶子）必须一致——
+   全未声明 → `default`；全同一 `layout: L` → `L`；混用（未声明 + 声明、
+   或多个不同声明）→ 构建期报错（含文件与指引）；
+3. 按布局分组：每组生成一条 pathless 壳记录 `{ lazy: <布局文件>, children:
+   [成员…] }`；`default` 壳排最前，其余按 id 排序；空壳不生成；
+4. URL/参数/`handle`/类型面与换壳无关，保持不变。
+
+同一布局的多个顶层成员聚合进**同一条懒加载壳记录**（布局组件单份、React
+单实例）。
+
+### 与既有能力的互斥规则
+
+`layouts` 开启期间，以下"目录隐式布局"会被构建期报错并给出指引（改用声明）：
+
+- 同名文件 + 目录布局（§4a，`blog.tsx` + `blog/`）；
+- 路由组的壳含义（`(name)/index.tsx` 或组内布局文件）；
+- `layoutFile`（含根 `layout.tsx` 全局壳）。
+
+普通 `index.tsx`（"默认内容"）不受影响，仍作为该路径的默认页面；未声明页面
+（含首页 `/` 与 `[...rest]` 404）进入默认壳。
+
+### 实现位置
+
+- `src/options.ts`：`LayoutsOptions`/`ResolvedLayouts` 解析与校验；
+- `src/core/context.ts`：`readLayoutFiles`（递归发现）、
+  `assertNoImplicitLayouts`、`assertLayoutsResolve`，scan 时刷新
+  `layoutContext`；
+- `src/codegen/generateRouteRecords.ts`：`LayoutContext` 类型、
+  `subtreeLayout`（块一致性）、`groupedMembers`/`genLayoutsRecords`（分组换
+  壳）；
+- `src/core/routeConfig.ts` + `src/codegen/generateDTS.ts`：`layout` 键的静态
+  提取与 `RouteConfig.layout` 类型；
+- 布局目录被纳入 dev watch（布局增删即重扫）。
+
+### v0.3 限制
+
+- 布局粒度为**顶层成员**：一个顶层目录块内不得混用布局（报错）；
+  需要"目录内逐页不同壳"请拆成独立顶层文件/路由组。
+- 不支持布局嵌套声明（页面只声明一个壳；需要嵌套时把外层壳放入布局组件
+  结构自行组合，或使用 route handle 自行实现）。
+- `layouts` 与 `layoutFile`/同名目录布局在同一项目内互斥（由报错保证）。
