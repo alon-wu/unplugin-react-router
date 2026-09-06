@@ -70,6 +70,7 @@ describe('generateDTS', () => {
     expect(dts).toContain(`"/docs/:lang": { "lang": string }`)
     expect(dts).toContain(`export type RouteParams<P extends AppRoutePath>`)
     expect(dts).toContain(`export interface RouteConfig`)
+    expect(dts).toContain(`layout?: string`)
     expect(dts).toContain(`export type LoaderData<T extends`)
   })
 

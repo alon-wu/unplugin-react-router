@@ -48,6 +48,14 @@ options:
 - `dot-pages/settings.profile.tsx` + `dotNesting: true`: `/settings/profile`
   renders `SETTINGS-PROFILE`.
 
+v0.3 declarative layouts additionally have a dedicated SSR fixture project
+`layouts-app/` (`app/` holds `blank.tsx`/`admin.tsx`, `pages/` holds pages):
+
+- undeclared pages (`/`, `/login`, `/users/:id`) render `BLANK-SHELL` plus
+  their content;
+- `/dashboard` (declaring `export const route = { layout: 'admin' }`) renders
+  `ADMIN-SHELL` and **not** `BLANK-SHELL` (shell-swap check).
+
 ## Run the checks
 
 ```bash
@@ -82,10 +90,14 @@ Two dedicated fixture Vite apps, started/stopped automatically by
   page file makes it reachable without a restart; removing retires it — 15 s
   polling budget per case).
 - **`tests/e2e-layouts-app/`** (port 5203, project `layouts`): v0.3 declarative
-  layouts; `tests/e2e/layouts.spec.ts` asserts 5 criteria: undeclared pages
+  layouts; `tests/e2e/layouts.spec.ts` asserts 7 criteria: undeclared pages
   (`/`, `/login`, `/settings`, `/users/*`, 404) render inside the default
-  (blank) shell, and `/dashboard` (declaring `route.layout = 'admin'`) renders
-  inside ADMIN without the BLANK shell.
+  (blank) shell, `/dashboard` (declaring `route.layout = 'admin'`) renders
+  inside ADMIN without the BLANK shell, plus **two layout structural-HMR
+  cases**: adding a layout file + a page declaring it makes the new shell
+  reachable without a restart; deleting a still-referenced layout file makes
+  navigation fail with `Failed to fetch dynamically imported module` until the
+  layout file is restored.
 
 ```bash
 pnpm test:e2e                     # full run (both apps; auto-starts vite + browser)
@@ -132,3 +144,25 @@ build step is needed before `pnpm dev`; plugin edits apply on restart.
   written against the implementation and should stay truthful (see the Known
   limitations sections).
 - `pnpm typecheck` and `pnpm test` must pass before committing.
+
+## Verification record
+
+Snapshot of one full acceptance pass on 2026-09-06 (the v0.3 declarative
+layouts delivery); numbers drift across versions — for routine runs use the
+commands at the top of this page.
+
+| Item | Result |
+| --- | --- |
+| `pnpm typecheck` | ✅ `tsc --noEmit` clean |
+| `pnpm test` (vitest, 8 suites) | ✅ 87/87: tree 26 · routeConfig 13 · typedSurface 4 · generateRouteRecords 9 · layouts 9 · runtime(SSR) 16 · plugin 7 · watch 3 |
+| `pnpm build` | ✅ ESM + CJS + d.ts (5 entries) |
+| `pnpm test:e2e` (Playwright/Chrome, two apps) | ✅ 23/23: `app` 16 (base conventions, v0.2 features, dev HMR) + `layouts` 7 (default shell/swapping + 2 layout HMR cases) |
+| Consumer-side type check | ✅ throwaway real project: `route.layout` `satisfies RouteConfig`, `LoaderData<typeof loader>` compile under `tsc`; the generated routes contain both `blank`/`admin` shells |
+| `pnpm changeset status` | ✅ minor: `unplugin-react-router` |
+
+Boundary behaviour captured while verifying: deleting a layout file that is
+still referenced by the in-memory route table makes the next navigation fail
+with `Failed to fetch dynamically imported module` in dev; restoring the layout
+file (or removing the page referencing it) heals the app — no dev-server
+restart needed. The two layout HMR cases in `tests/e2e/layouts.spec.ts` pin
+this behaviour.

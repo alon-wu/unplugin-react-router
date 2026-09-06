@@ -44,6 +44,13 @@ v0.2 的其余新能力由独立的 fixture 文件夹 + 选项覆盖：
 - `dot-pages/settings.profile.tsx` + `dotNesting: true`：`/settings/profile`
   渲染 `SETTINGS-PROFILE`。
 
+v0.3 的声明式布局另有独立 SSR fixture 工程 `layouts-app/`（`app/` 放
+`blank.tsx`/`admin.tsx`，`pages/` 放页面）：
+
+- 未声明页面（`/`、`/login`、`/users/:id`）渲染 `BLANK-SHELL` + 各自内容；
+- `/dashboard`（`export const route = { layout: 'admin' }`）渲染 `ADMIN-SHELL`
+  且**不含** `BLANK-SHELL`（换壳验证）。
+
 ## 运行检查
 
 ```bash
@@ -73,9 +80,12 @@ pnpm -C playground build
   绝对覆盖含原路径失效、点嵌套、`filePatterns`、参数化前缀）、开发期结构性
   HMR（增删页面文件即时生效，15 s 预算）。
 - **`tests/e2e-layouts-app/`**（端口 5203，project `layouts`）：v0.3 声明式
-  布局；`tests/e2e/layouts.spec.ts` 5 条断言：未声明页面（`/`、`/login`、
+  布局；`tests/e2e/layouts.spec.ts` 7 条断言：未声明页面（`/`、`/login`、
   `/settings`、`/users/*`、404）都在默认（blank）壳内渲染；声明
-  `route.layout = 'admin'` 的 `/dashboard` 渲染在 ADMIN 壳且不含 BLANK 壳。
+  `route.layout = 'admin'` 的 `/dashboard` 渲染在 ADMIN 壳且不含 BLANK 壳；
+  另有两条**布局结构性 HMR**：运行中新增布局文件 + 声明它的页面 → 无需重启
+  即可访问新壳；删除被引用的布局文件 → 页面导航报
+  `Failed to fetch dynamically imported module`，把布局文件加回后自动恢复。
 
 ```bash
 pnpm test:e2e                     # 全量（两个工程，自动起 vite + 浏览器）
@@ -110,3 +120,23 @@ console/运行时错误，并现场做一次"加/删页面文件 → 路由出�
 - 保持代码生成纯粹（树 → 字符串），使其始终可做快照测试。
 - 行为改动须同步更新文档（`docs/`）；文档对照实现编写，应始终保持真实（参见“已知限制”各节）。
 - 提交前必须通过 `pnpm typecheck` 与 `pnpm test`。
+
+## 验收记录（Verification record）
+
+以下为 2026-09-06（v0.3 声明式布局交付）一轮完整验收的快照；数字会随版本
+演进，常跑请以本节开头给出的命令为准。
+
+| 项目 | 结果 |
+| --- | --- |
+| `pnpm typecheck` | ✅ `tsc --noEmit` 无错误 |
+| `pnpm test`（vitest，8 套件） | ✅ 87/87：tree 26 · routeConfig 13 · typedSurface 4 · generateRouteRecords 9 · layouts 9 · runtime(SSR) 16 · plugin 7 · watch 3 |
+| `pnpm build` | ✅ ESM + CJS + d.ts（5 入口） |
+| `pnpm test:e2e`（Playwright/Chrome 双工程） | ✅ 23/23：`app` 16（基础约定、v0.2 特性、dev HMR）+ `layouts` 7（默认壳/换壳 + 2 条布局 HMR） |
+| 消费方类型校验 | ✅ 临时真实工程：`route.layout` satisfies `RouteConfig`、`LoaderData<typeof loader>` 通过 `tsc`；生成的 routes 同时含 `blank`/`admin` 壳 |
+| `pnpm changeset status` | ✅ minor：`unplugin-react-router` |
+
+验证过程中发现并记录的边界行为：删除"仍被路由表引用的布局文件"时，dev 下
+页面会在下次导航报 `Failed to fetch dynamically imported module`（浏览器侧旧
+模块缓存已失效、新文件不存在）；把布局文件加回（或移除引用它的页面）后即恢复，
+全程无需重启 dev server——`tests/e2e/layouts.spec.ts` 的两条布局 HMR 用例固化
+了这一行为。
