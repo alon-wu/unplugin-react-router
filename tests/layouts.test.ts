@@ -218,3 +218,96 @@ describe('layouts: validation errors', () => {
     }
   })
 })
+
+describe('layouts: extra coverage (shared shells, index & promoted, catch-all rule)', () => {
+  it('shares ONE lazy layout shell between several pages of the same layout', async () => {
+    const { dir, app, pages } = makeProject()
+    try {
+      writeFileSync(join(app, 'blank.tsx'), shell('blank'))
+      writeFileSync(join(app, 'admin.tsx'), shell('admin'))
+      for (const name of ['dashboard', 'reports']) {
+        writeFileSync(
+          join(pages, `${name}.tsx`),
+          `export const route = { layout: 'admin' }\n${page(name)}`
+        )
+      }
+      writeFileSync(join(pages, 'login.tsx'), page('Login'))
+      const ctx = ctxFor(dir, { dir: 'app', default: 'blank' })
+      await ctx.scanPages()
+      const code = ctx.getRoutes()
+      expect(code.match(/app\/admin\.tsx/g)).toHaveLength(1)
+      const adminChunk = code.slice(code.indexOf('app/admin.tsx'))
+      expect(adminChunk).toContain('path: "dashboard"')
+      expect(adminChunk).toContain('path: "reports"')
+      const blankChunk = code.slice(0, code.indexOf('app/admin.tsx'))
+      expect(blankChunk).toContain('path: "login"')
+      expect(blankChunk).not.toContain('path: "dashboard"')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lets the root index page declare a layout (moved out of the default shell)', async () => {
+    const { dir, app, pages } = makeProject()
+    try {
+      writeFileSync(join(app, 'blank.tsx'), shell('blank'))
+      writeFileSync(join(app, 'admin.tsx'), shell('admin'))
+      writeFileSync(
+        join(pages, 'index.tsx'),
+        `export const route = { layout: 'admin' }\n${page('Home')}`
+      )
+      writeFileSync(join(pages, 'login.tsx'), page('Login'))
+      writeFileSync(join(pages, '[...rest].tsx'), page('NotFound'))
+      const ctx = ctxFor(dir, { dir: 'app', default: 'blank' })
+      await ctx.scanPages()
+      const code = ctx.getRoutes()
+      const adminChunk = code.slice(code.indexOf('app/admin.tsx'))
+      expect(adminChunk).toContain('index: true')
+      const blankChunk = code.slice(0, code.indexOf('app/admin.tsx'))
+      expect(blankChunk).toContain('path: "login"')
+      expect(blankChunk).toContain('path: "*"')
+      expect(blankChunk).not.toContain('index: true')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lets a promoted (absolute path) page declare a layout', async () => {
+    const { dir, app, pages } = makeProject()
+    try {
+      writeFileSync(join(app, 'blank.tsx'), shell('blank'))
+      writeFileSync(join(app, 'admin.tsx'), shell('admin'))
+      mkdirSync(join(pages, 'members'), { recursive: true })
+      writeFileSync(
+        join(pages, 'members', '[id].tsx'),
+        `export const route = { path: '/member/:id', layout: 'admin' }\n${page('Member')}`
+      )
+      writeFileSync(join(pages, 'about.tsx'), page('About'))
+      const ctx = ctxFor(dir, { dir: 'app', default: 'blank' })
+      await ctx.scanPages()
+      const code = ctx.getRoutes()
+      const adminChunk = code.slice(code.indexOf('app/admin.tsx'))
+      expect(adminChunk).toContain('path: "/member/:id"')
+      const blankChunk = code.slice(0, code.indexOf('app/admin.tsx'))
+      expect(blankChunk).not.toContain('member')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a layout declaration on a catch-all ([...rest]) page', async () => {
+    const { dir, app, pages } = makeProject()
+    try {
+      writeFileSync(join(app, 'blank.tsx'), shell('blank'))
+      writeFileSync(join(app, 'admin.tsx'), shell('admin'))
+      writeFileSync(
+        join(pages, '[...rest].tsx'),
+        `export const route = { layout: 'admin' }\n${page('NotFound')}`
+      )
+      const ctx = ctxFor(dir, { dir: 'app', default: 'blank' })
+      await expect(ctx.scanPages()).rejects.toThrow(/catch-all pages .* cannot/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

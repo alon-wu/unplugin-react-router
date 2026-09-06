@@ -41,6 +41,8 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Run browser E2E
         run: pnpm exec playwright test
+      - name: Run declarative-layouts browser smoke
+        run: node tests/scripts/layouts-smoke.mjs
 
   release:
     name: Changesets release

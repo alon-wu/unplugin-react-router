@@ -482,6 +482,9 @@ Rules:
   every page inside one top-level directory block must agree (all undeclared →
   default; all the same layout → that layout). Mixed blocks error at build
   time (split into separate top-level files or route groups).
+- **Catch-alls stay in the default shell**: `[...rest].tsx` pages cannot
+  declare `layout` (a second global catch-all would never match); declaring
+  one errors.
 - **Mutually exclusive with directory layouts**: while `layouts` is on,
   directories no longer imply layouts — same-name directory layouts (§4a),
   group index shells (§4b) and `layoutFile` (§4d) are rejected with guidance;

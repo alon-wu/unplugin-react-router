@@ -117,12 +117,34 @@ playground dev server (`127.0.0.1:5173`): start `pnpm dev`, then run
 page marker and the absence of console/runtime errors, and performs a live
 structural-HMR check (adding/removing a page file → route appears/disappears).
 
+`tests/scripts/layouts-smoke.mjs` is a **self-hosting** smoke against the v0.3
+declarative-layouts example (`playground-layouts/`, with
+`layouts: { dir: 'src/app', default: 'blank' }`) — one command starts/stops the
+dev server and Chrome:
+
+```bash
+node tests/scripts/layouts-smoke.mjs
+```
+
+It asserts: default-shell wrapping (`/`, `/login`, `/settings`, `/users/:id`,
+404 all inside `BLANK SHELL`), the declared page `/dashboard` moving into
+`ADMIN SHELL` (not BLANK), and layout structural HMR: adding
+`src/app/team.tsx` + a page declaring it makes it reachable without a restart;
+deleting the layout makes that page report
+`Failed to fetch dynamically imported module`; restoring the layout heals it.
+
 ## Playground as the manual reference
 
 `playground/src/pages/` mirrors every convention (index, `[id]`, `[...rest]`,
 group layout, organisation-only group, same-name layout). It is wired to the
 plugin **source** (`playground/vite.config.ts` imports `../src/vite.ts`), so no
 build step is needed before `pnpm dev`; plugin edits apply on restart.
+
+`playground-layouts/` is the **declarative-layouts** example (directories only
+shape URLs, layout components live in `src/app/`, pages stay flat and swap
+shells via `export const route = { layout }`), also wired to the plugin source:
+run `pnpm -C playground-layouts dev` to try it by hand (its default vite port
+5173 clashes with the other playground — pass `--port` if both run at once).
 
 ## How to add coverage
 
@@ -154,7 +176,7 @@ commands at the top of this page.
 | Item | Result |
 | --- | --- |
 | `pnpm typecheck` | ✅ `tsc --noEmit` clean |
-| `pnpm test` (vitest, 8 suites) | ✅ 87/87: tree 26 · routeConfig 13 · typedSurface 4 · generateRouteRecords 9 · layouts 9 · runtime(SSR) 16 · plugin 7 · watch 3 |
+| `pnpm test` (vitest, 8 suites) | ✅ 94/94: tree 26 · routeConfig 13 · typedSurface 4 · generateRouteRecords 9 · layouts 13 · runtime(SSR) 16 · plugin 10 · watch 3 |
 | `pnpm build` | ✅ ESM + CJS + d.ts (5 entries) |
 | `pnpm test:e2e` (Playwright/Chrome, two apps) | ✅ 23/23: `app` 16 (base conventions, v0.2 features, dev HMR) + `layouts` 7 (default shell/swapping + 2 layout HMR cases) |
 | Consumer-side type check | ✅ throwaway real project: `route.layout` `satisfies RouteConfig`, `LoaderData<typeof loader>` compile under `tsc`; the generated routes contain both `blank`/`admin` shells |

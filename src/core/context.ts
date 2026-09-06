@@ -198,6 +198,26 @@ function assertLayoutsResolve(
   }
 }
 
+/**
+ * Catch-all (`[...rest]`) pages must stay in the default shell: a splat under
+ * another pathless layout shell would be a *second* global catch-all, so the
+ * layout declaration is rejected with guidance.
+ */
+function assertNoCatchAllLayout(root: TreeNode): void {
+  const walk = (node: TreeNode): void => {
+    if (node.kind === 'splat' && node.fileConfig?.layout !== undefined) {
+      throw new Error(
+        `[unplugin-react-router] "${node.file}" declares layout ` +
+          `"${node.fileConfig.layout}", but catch-all pages ([...rest].tsx) cannot ` +
+          'be moved into a named layout — a second global catch-all would never ' +
+          'match. Remove the layout declaration (catch-alls stay in the default shell).'
+      )
+    }
+    for (const child of node.children.values()) walk(child)
+  }
+  for (const child of root.children.values()) walk(child)
+}
+
 export function createRoutesContext(options: ResolvedOptions): RoutesContext {
   const log = options.logs
     ? (...args: unknown[]) => console.log('[unplugin-react-router]', ...args)
@@ -272,6 +292,7 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
       const layoutFiles = await readLayoutFiles(options.layouts)
       assertNoImplicitLayouts(newRoot)
       assertLayoutsResolve(newRoot, layoutFiles)
+      assertNoCatchAllLayout(newRoot)
       layoutContext = {
         defaultId: options.layouts.defaultId,
         layoutFiles,
@@ -280,8 +301,19 @@ export function createRoutesContext(options: ResolvedOptions): RoutesContext {
       layoutContext = undefined
     }
 
+    // The structure signature includes the layout map so that adding/removing
+    // a layout file also invalidates and reloads (routes may reference it).
+    const layoutSig = layoutContext
+      ? [...layoutContext.layoutFiles.entries()]
+          .map(([id, file]) => `${id}:${file}`)
+          .sort()
+          .join('\n')
+      : ''
+
     root = newRoot
-    signature = [...collected].sort().join('\n')
+    signature =
+      [...collected].sort().join('\n') +
+      (layoutSig ? '\n---layouts---\n' + layoutSig : '')
 
     if (options.logs) {
       printTree(root, (...args) => log(...args))

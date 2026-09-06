@@ -184,3 +184,77 @@ describe('vite plugin dev-server wiring', () => {
     }
   })
 })
+
+describe('watch & extension edge coverage', () => {
+  it('does not start any watcher when watch is false', async () => {
+    const { dir, pages } = tmpProject()
+    try {
+      writeFileSync(join(pages, 'home.tsx'), 'export default function H() { return <div>H</div> }')
+      const plugin = reactRouter({ root: dir, routesFolder: 'pages', dts: false, watch: false }) as any
+      const httpOnce = vi.fn()
+      const fakeServer = {
+        watcher: null,
+        ws: { send: vi.fn() },
+        httpServer: { once: httpOnce },
+        moduleGraph: { getModuleById: () => undefined },
+      }
+      await plugin.buildStart()
+      const ret = plugin.configureServer(fakeServer)
+      expect(ret).toBeUndefined()
+      expect(httpOnce).not.toHaveBeenCalled()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('watches the layouts directory so layout add/remove triggers a rescan', async () => {
+    const { dir, pages } = tmpProject()
+    try {
+      const app = join(dir, 'app')
+      mkdirSync(app, { recursive: true })
+      writeFileSync(join(pages, 'home.tsx'), 'export default function H() { return <div>H</div> }')
+      writeFileSync(join(app, 'blank.tsx'), 'export default function B() { return null }')
+      const plugin = reactRouter({
+        root: dir,
+        routesFolder: 'pages',
+        dts: false,
+        layouts: { dir: 'app', default: 'blank' },
+      }) as any
+      const watcher = new EventEmitter()
+      const send = vi.fn()
+      const fakeServer = {
+        watcher,
+        ws: { send },
+        httpServer: { once: vi.fn() },
+        moduleGraph: { getModuleById: () => undefined },
+      }
+      await plugin.buildStart()
+      plugin.configureServer(fakeServer)
+
+      // adding a layout file under src/app is a page-structure change
+      writeFileSync(join(app, 'admin.tsx'), 'export default function A() { return null }')
+      watcher.emit('all', 'add', join(app, 'admin.tsx'))
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      expect(send).toHaveBeenCalledWith({ type: 'full-reload' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('only treats matching extensions as pages', async () => {
+    const { dir, pages } = tmpProject()
+    try {
+      writeFileSync(join(pages, 'a.tsx'), 'export default function A() { return <div>A</div> }')
+      writeFileSync(join(pages, 'b.jsx'), 'export default function B() { return <div>B</div> }')
+      const ctx = createRoutesContext(
+        resolveOptions({ root: dir, routesFolder: 'pages', extensions: ['.tsx'], dts: false })
+      )
+      await ctx.scanPages()
+      const code = ctx.getRoutes()
+      expect(code).toContain('path: "a"')
+      expect(code).not.toContain('b.jsx')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

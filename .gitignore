@@ -8,3 +8,5 @@ tests/.gen
 playground/dist
 test-results
 playwright-report
+
+playground-layouts/dist

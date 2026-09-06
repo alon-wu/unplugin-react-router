@@ -104,9 +104,28 @@ CI 的 `e2e` job 改用 Playwright 管理的 Chromium（`pnpm exec playwright in
 console/运行时错误，并现场做一次"加/删页面文件 → 路由出现/失效"的结构性 HMR
 检查。
 
+`tests/scripts/layouts-smoke.mjs` 是对 **v0.3 声明式布局示例**
+（`playground-layouts/`，`layouts: { dir: 'src/app', default: 'blank' }`）的
+**自托管**冒烟：一条命令即可（自动起/停 dev server 与 Chrome）：
+
+```bash
+node tests/scripts/layouts-smoke.mjs
+```
+
+它断言：默认壳包裹（`/`、`/login`、`/settings`、`/users/:id`、404 都在
+`BLANK SHELL` 内）、声明页 `/dashboard` 换入 `ADMIN SHELL` 且不含 BLANK、
+以及**布局结构性 HMR**：运行中新增 `src/app/team.tsx` + 声明它的页面 → 免重启
+可访问；删除布局 → 该页报
+`Failed to fetch dynamically imported module`；恢复布局 → 自愈。
+
 ## 把 playground 当作手工验证参考
 
 `playground/src/pages/` 复刻了每一种约定（index、`[id]`、`[...rest]`、分组布局、仅组织用分组、同名布局）。它直接接插件**源码**（`playground/vite.config.ts` 导入 `../src/vite.ts`），因此 `pnpm dev` 之前无需构建步骤；插件改动在重启后生效。
+
+`playground-layouts/` 是**声明式布局**示例工程（目录即 URL、布局组件在
+`src/app/`、页面平铺并用 `export const route = { layout }` 换壳），同样直连
+插件源码：`pnpm -C playground-layouts dev` 后打开其端口（vite 默认 5173，
+与 playground 冲突时可用 `--port` 指定）手工体验。
 
 ## 如何补充测试覆盖
 
@@ -129,7 +148,7 @@ console/运行时错误，并现场做一次"加/删页面文件 → 路由出�
 | 项目 | 结果 |
 | --- | --- |
 | `pnpm typecheck` | ✅ `tsc --noEmit` 无错误 |
-| `pnpm test`（vitest，8 套件） | ✅ 87/87：tree 26 · routeConfig 13 · typedSurface 4 · generateRouteRecords 9 · layouts 9 · runtime(SSR) 16 · plugin 7 · watch 3 |
+| `pnpm test`（vitest，8 套件） | ✅ 94/94：tree 26 · routeConfig 13 · typedSurface 4 · generateRouteRecords 9 · layouts 13 · runtime(SSR) 16 · plugin 10 · watch 3 |
 | `pnpm build` | ✅ ESM + CJS + d.ts（5 入口） |
 | `pnpm test:e2e`（Playwright/Chrome 双工程） | ✅ 23/23：`app` 16（基础约定、v0.2 特性、dev HMR）+ `layouts` 7（默认壳/换壳 + 2 条布局 HMR） |
 | 消费方类型校验 | ✅ 临时真实工程：`route.layout` satisfies `RouteConfig`、`LoaderData<typeof loader>` 通过 `tsc`；生成的 routes 同时含 `blank`/`admin` 壳 |

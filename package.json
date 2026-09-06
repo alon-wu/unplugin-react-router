@@ -63,6 +63,7 @@
     "dev": "pnpm -C playground dev",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "smoke:layouts": "node tests/scripts/layouts-smoke.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "changeset": "changeset",
     "release": "changeset publish"
