@@ -60,6 +60,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "prepare": "tsup",
     "dev": "pnpm -C playground dev",
     "test": "vitest run",
     "test:e2e": "playwright test",
