@@ -10,3 +10,6 @@ test-results
 playwright-report
 
 playground-layouts/dist
+
+# local npm/bun tarball
+*.tgz
